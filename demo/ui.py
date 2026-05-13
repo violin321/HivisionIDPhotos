@@ -83,7 +83,7 @@ def create_ui(
                         # before backend normalization can map it back to size_list_options.
                         mode_options = gr.Radio(
                             choices=LOCALES["size_mode"][DEFAULT_LANG]["choices"]
-                            + LOCALES["size_list"][DEFAULT_LANG]["develop"],
+                            + list(LOCALES["size_list"][DEFAULT_LANG]["develop"].keys()),
                             label=LOCALES["size_mode"][DEFAULT_LANG]["label"],
                             value=LOCALES["size_mode"][DEFAULT_LANG]["choices"][0],
                             min_width=520,
