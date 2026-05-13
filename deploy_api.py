@@ -50,7 +50,7 @@ async def idphoto_inference(
     input_image_base64: str = Form(None),
     height: int = Form(413),
     width: int = Form(295),
-    human_matting_model: str = Form("modnet_photographic_portrait_matting"),
+    human_matting_model: str = Form("hivision_modnet"),
     face_detect_model: str = Form("mtcnn"),
     hd: bool = Form(True),
     dpi: int = Form(300),

@@ -33,7 +33,7 @@ def create_ui(
     else:
         DEFAULT_LANG = language[0]
 
-    DEFAULT_HUMAN_MATTING_MODEL = "modnet_photographic_portrait_matting"
+    DEFAULT_HUMAN_MATTING_MODEL = os.getenv("DEFAULT_HUMAN_MATTING_MODEL", "hivision_modnet")
     DEFAULT_FACE_DETECT_MODEL = "retinaface-resnet50"
 
     if DEFAULT_HUMAN_MATTING_MODEL in human_matting_models:
