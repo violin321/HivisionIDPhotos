@@ -1,11 +1,11 @@
 export type TaskStatus = 'queued' | 'processing' | 'succeeded' | 'failed' | 'expired';
 
 export const stages = [
-  { label: 'Upload', detail: 'multipart/form-data image intake', state: 'complete' },
-  { label: 'Specification', detail: '1-inch CN ID · white background', state: 'active' },
+  { label: 'Upload', detail: 'local File intake · multipart contract', state: 'active' },
+  { label: 'Specification', detail: '一寸 · 二寸 · 护照/签证', state: 'pending' },
   { label: 'Task', detail: 'queued → processing → succeeded', state: 'pending' },
   { label: 'Result', detail: 'official output file handles', state: 'pending' },
-  { label: 'AI preview', detail: 'optional server-side enhance branch', state: 'pending' },
+  { label: 'AI preview', detail: 'optional disabled enhance branch', state: 'pending' },
 ] as const;
 
 export const mockTask = {
