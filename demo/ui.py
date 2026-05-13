@@ -78,8 +78,12 @@ def create_ui(
                 ) as key_parameter_tab:
                     # 尺寸模式
                     with gr.Row():
+                        # Include preset-size labels as hidden-compatible choices so older
+                        # Gradio sessions that cached a preset value in this radio do not fail
+                        # before backend normalization can map it back to size_list_options.
                         mode_options = gr.Radio(
-                            choices=LOCALES["size_mode"][DEFAULT_LANG]["choices"],
+                            choices=LOCALES["size_mode"][DEFAULT_LANG]["choices"]
+                            + LOCALES["size_list"][DEFAULT_LANG]["develop"],
                             label=LOCALES["size_mode"][DEFAULT_LANG]["label"],
                             value=LOCALES["size_mode"][DEFAULT_LANG]["choices"][0],
                             min_width=520,
