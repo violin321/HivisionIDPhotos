@@ -100,8 +100,29 @@ def _iter_samples() -> Iterable[dict]:
     return manifest.get("samples", [])
 
 
-def assert_true(condition: bool, message: str) -> None:
+def _metadata_debug(output: AIEnhanceOutput) -> str:
+    metadata = output.metadata
+    payload = {
+        "status": output.status,
+        "message": output.message,
+        "fallback_reason": metadata.fallback_reason,
+        "error_code": metadata.error_code,
+        "identity_guard_passed": metadata.identity_guard_passed,
+        "identity_guard_metrics": metadata.identity_guard_metrics,
+        "validation_passed": metadata.validation_passed,
+        "validation_warnings": metadata.validation_warnings,
+        "mask_edit": metadata.mask_edit,
+        "crop_edit": metadata.crop_edit,
+        "face_protected": metadata.face_protected,
+        "edit_region": metadata.edit_region,
+    }
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True)
+
+
+def assert_true(condition: bool, message: str, output: AIEnhanceOutput | None = None) -> None:
     if not condition:
+        if output is not None:
+            message = f"{message}\nmetadata={_metadata_debug(output)}"
         raise AssertionError(message)
 
 
@@ -125,27 +146,27 @@ def main() -> None:
         for mode in sample.get("modes", ["repair"]):
             service = AIEnhanceService(provider_map={"gpt-image-2": EchoProvider()})
             output = service.enhance(AIEnhanceRequest(input_image_base64=input_b64, mode=mode, consent=True, template_name="regression_template" if mode in {"background_template", "outfit"} else None, client_id="ai-regression"))
-            assert_true(output.status is True, f"{sample['id']} {mode} should pass basic guarded generation")
-            assert_true(output.metadata.identity_guard_passed is True, f"{sample['id']} {mode} identity guard should pass")
-            assert_true("protected_mean_delta" in output.metadata.identity_guard_metrics, f"{sample['id']} {mode} missing identity metrics")
+            assert_true(output.status is True, f"{sample['id']} {mode} should pass basic guarded generation", output)
+            assert_true(output.metadata.identity_guard_passed is True, f"{sample['id']} {mode} identity guard should pass", output)
+            assert_true("protected_mean_delta" in output.metadata.identity_guard_metrics, f"{sample['id']} {mode} missing identity metrics", output)
             passed += 1
 
         for mode in ("repair", "background_template"):
             service = AIEnhanceService(provider_map={"gpt-image-2": FaceTamperProvider()})
             output = service.enhance(AIEnhanceRequest(input_image_base64=input_b64, mode=mode, consent=True, template_name="regression_template" if mode == "background_template" else None, client_id="ai-regression-tamper"))
-            assert_true(output.status is False, f"{sample['id']} {mode} tamper should fallback")
-            assert_true(output.metadata.identity_guard_passed is False, f"{sample['id']} {mode} should record guard failure")
-            assert_true(output.metadata.error_code in {"IDENTITY_PROTECTED_REGION_CHANGED", "IDENTITY_STRUCTURE_CHANGED", "IDENTITY_FACE_COLOR_SHIFT", "AI_OUTPUT_MODIFIED_TOO_MUCH"}, f"{sample['id']} {mode} unexpected error {output.metadata.error_code}")
+            assert_true(output.status is False, f"{sample['id']} {mode} tamper should fallback", output)
+            assert_true(output.metadata.identity_guard_passed is False, f"{sample['id']} {mode} should record guard failure", output)
+            assert_true(output.metadata.error_code in {"IDENTITY_PROTECTED_REGION_CHANGED", "IDENTITY_STRUCTURE_CHANGED", "IDENTITY_FACE_COLOR_SHIFT", "AI_OUTPUT_MODIFIED_TOO_MUCH", "BACKGROUND_SPILL_DETECTED"}, f"{sample['id']} {mode} unexpected error {output.metadata.error_code}", output)
             passed += 1
 
         service = AIEnhanceService(provider_map={"gpt-image-2": OutfitBadCropProvider()})
         output = service.enhance(AIEnhanceRequest(input_image_base64=input_b64, mode="outfit", consent=True, template_name="business_suit_black", client_id="ai-regression-outfit"))
         # The crop/mask path should either reject suspicious outfit output or composite it safely.
         if output.status is False:
-            assert_true(output.metadata.error_code is not None, f"{sample['id']} outfit fallback should carry error code")
+            assert_true(output.metadata.error_code is not None, f"{sample['id']} outfit fallback should carry error code", output)
         else:
-            assert_true(output.metadata.mask_edit is True and output.metadata.face_protected is True, f"{sample['id']} outfit success should be masked/protected")
-            assert_true(output.metadata.identity_guard_passed is True, f"{sample['id']} outfit safe composite should pass identity guard")
+            assert_true(output.metadata.mask_edit is True and output.metadata.face_protected is True, f"{sample['id']} outfit success should be masked/protected", output)
+            assert_true(output.metadata.identity_guard_passed is True, f"{sample['id']} outfit safe composite should pass identity guard", output)
         passed += 1
 
     print(f"AI regression suite passed: checks={passed}, skipped_samples={skipped}")

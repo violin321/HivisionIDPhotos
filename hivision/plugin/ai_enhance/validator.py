@@ -70,19 +70,32 @@ def validate_ai_enhance_image(image_base64: str) -> AIEnhanceValidationResult:
     bgr = image[:, :, :3].astype(np.float32)
     mean_b, mean_g, mean_r = bgr.mean(axis=(0, 1))
 
-    if mean_b > mean_g * 1.15 and mean_b > mean_r * 1.3 and (mean_b - mean_r) > 25:
+    blue_dominance = mean_b - max(mean_g, mean_r)
+    blue_ratio = float(np.logical_and(bgr[:, :, 0] > bgr[:, :, 1] + 45, bgr[:, :, 0] > bgr[:, :, 2] + 55).mean())
+
+    # Keep rejecting obviously broken provider outputs (for example an all-blue
+    # image), but do not fail real ID photos just because their legitimate
+    # background is blue.  Natural blue-background portraits can have high global
+    # B means, so hard failure requires both strong channel dominance and a large
+    # fraction of strongly-blue pixels; milder cases remain warnings for audit.
+    if (
+        mean_b > mean_g * 1.25
+        and mean_b > mean_r * 1.45
+        and blue_dominance > 38
+        and blue_ratio > 0.35
+    ):
         result.passed = False
         result.error_code = "COLOR_CAST_DETECTED"
         result.message = (
             "Provider image has obvious blue color cast "
-            f"(mean_b={mean_b:.1f}, mean_g={mean_g:.1f}, mean_r={mean_r:.1f})"
+            f"(mean_b={mean_b:.1f}, mean_g={mean_g:.1f}, mean_r={mean_r:.1f}, blue_ratio={blue_ratio:.3f})"
         )
         return result
 
     if mean_b > mean_g * 1.08 and mean_b > mean_r * 1.15 and (mean_b - mean_r) > 12:
         result.warnings.append(
             "mild_blue_cast:"
-            f"mean_b={mean_b:.1f},mean_g={mean_g:.1f},mean_r={mean_r:.1f}"
+            f"mean_b={mean_b:.1f},mean_g={mean_g:.1f},mean_r={mean_r:.1f},blue_ratio={blue_ratio:.3f}"
         )
 
     return result
