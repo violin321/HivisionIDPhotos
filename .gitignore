@@ -31,3 +31,7 @@ test/temp/*
 
 # Local virtualenv
 .venv/
+
+# Web v2 local dependencies and build output
+web/node_modules/
+web/.next/
