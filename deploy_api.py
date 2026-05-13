@@ -1,4 +1,5 @@
 from fastapi import FastAPI, UploadFile, Form, File
+import logging
 from hivision import IDCreator
 from hivision.error import FaceError
 from hivision.creator.layout_calculator import (
@@ -26,6 +27,8 @@ from starlette.formparsers import MultiPartParser
 MultiPartParser.max_part_size = 10 * 1024 * 1024  # 10MB
 # 设置Starlette文件上传大小限制
 MultiPartParser.max_file_size = 20 * 1024 * 1024   # 20MB
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
 creator = IDCreator()
@@ -95,8 +98,16 @@ async def idphoto_inference(
             sharpen_strength=sharpen_strength,
             saturation_strength=saturation_strength,
         )
-    except FaceError:
-        result_message = {"status": False}
+    except FaceError as err:
+        logger.exception(
+            "[API] idphoto failed: face_num=%s matting_model=%s face_detect_model=%s input_shape=%s size=%s",
+            getattr(err, "face_num", None),
+            human_matting_model,
+            face_detect_model,
+            getattr(img, "shape", None),
+            size,
+        )
+        result_message = {"status": False, "face_num": getattr(err, "face_num", None)}
     # 如果检测到人脸数量等于1, 则返回标准证和高清照结果（png 4通道图像）
     else:
         result_image_standard_bytes = save_image_dpi_to_bytes(result.standard, None, dpi)

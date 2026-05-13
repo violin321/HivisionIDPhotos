@@ -21,6 +21,9 @@ import requests
 import cv2
 import os
 import numpy as np
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 mtcnn = None
@@ -30,33 +33,87 @@ RETINAFCE_SESS = None
 
 def detect_face_mtcnn(ctx: Context, scale: int = 2):
     """
-    基于MTCNN模型的人脸检测处理器，只进行人脸数量的检测
-    :param ctx: 上下文，此时已获取到原始图和抠图结果，但是我们只需要原始图
-    :param scale: 最大边长缩放比例，原图:缩放图 = 1:scale
-    :raise FaceError: 人脸检测错误，多个人脸或者没有人脸
+    基于MTCNN模型的人脸检测处理器，只进行人脸数量的检测。
+    对 WebUI 上传图做多尺度/阈值 fallback，避免单一 1:2 缩放 + 高阈值漏检。
     """
     global mtcnn
     if mtcnn is None:
         mtcnn = MTCNN()
-    image = cv2.resize(
-        ctx.origin_image,
-        (ctx.origin_image.shape[1] // scale, ctx.origin_image.shape[0] // scale),
-        interpolation=cv2.INTER_AREA,
-    )
-    # landmarks 是 5 个关键点，分别是左眼、右眼、鼻子、左嘴角、右嘴角，
-    faces, landmarks = mtcnn.detect(image, thresholds=[0.8, 0.8, 0.8])
 
-    # print(len(faces))
-    if len(faces) != 1:
-        # 保险措施，如果检测到多个人脸或者没有人脸，用原图再检测一次
-        faces, landmarks = mtcnn.detect(ctx.origin_image)
-    else:
-        # 如果只有一个人脸，将人脸坐标放大
-        for item, param in enumerate(faces[0]):
-            faces[0][item] = param * 2
-    if len(faces) != 1:
-        raise FaceError("Expected 1 face, but got {}".format(len(faces)), len(faces))
+    candidates = []
+    origin = ctx.origin_image
+    if origin is not None:
+        candidates.append(("origin", origin, 1))
+    processing = getattr(ctx, "processing_image", None)
+    if processing is not None and processing is not origin:
+        candidates.append(("processing", processing, 1))
+    matting = getattr(ctx, "matting_image", None)
+    if matting is not None:
+        if matting.ndim == 3 and matting.shape[2] == 4:
+            matting_bgr = cv2.cvtColor(matting, cv2.COLOR_BGRA2BGR)
+        else:
+            matting_bgr = matting
+        candidates.append(("matting", matting_bgr, 1))
 
+    attempts = []
+    # 保留原有优先路径：缩放 1:2，高阈值。
+    attempts.append(("origin", origin, scale, [0.8, 0.8, 0.8]))
+    # 实用 fallback：原图/处理图、多尺度、默认和较宽松阈值。
+    for name, image, _ in candidates:
+        for attempt_scale in (1, 2, 3, 4):
+            for thresholds in (None, [0.7, 0.7, 0.7], [0.6, 0.7, 0.7]):
+                attempts.append((name, image, attempt_scale, thresholds))
+
+    best_faces = []
+    best_landmarks = None
+    seen = set()
+    for name, source_image, attempt_scale, thresholds in attempts:
+        if source_image is None:
+            continue
+        key = (name, id(source_image), attempt_scale, tuple(thresholds or ()))
+        if key in seen:
+            continue
+        seen.add(key)
+
+        detect_image = source_image
+        if attempt_scale > 1:
+            h, w = source_image.shape[:2]
+            detect_image = cv2.resize(
+                source_image,
+                (max(1, w // attempt_scale), max(1, h // attempt_scale)),
+                interpolation=cv2.INTER_AREA,
+            )
+
+        if thresholds is None:
+            faces, landmarks = mtcnn.detect(detect_image)
+        else:
+            faces, landmarks = mtcnn.detect(detect_image, thresholds=thresholds)
+
+        face_num = len(faces)
+        logger.info(
+            "[FaceDetect] mtcnn attempt source=%s scale=%s thresholds=%s shape=%s face_num=%s",
+            name,
+            attempt_scale,
+            thresholds or "default",
+            getattr(detect_image, "shape", None),
+            face_num,
+        )
+        if face_num == 1:
+            faces = np.array(faces, dtype=float)
+            landmarks = np.array(landmarks, dtype=float)
+            if attempt_scale > 1:
+                faces[0] = faces[0] * attempt_scale
+                landmarks[0] = landmarks[0] * attempt_scale
+            best_faces, best_landmarks = faces, landmarks
+            break
+        if best_landmarks is None or (face_num > 0 and len(best_faces) != 1):
+            best_faces, best_landmarks = faces, landmarks
+
+    best_face_num = 0 if best_faces is None else len(best_faces)
+    if best_face_num != 1:
+        raise FaceError("Expected 1 face, but got {}".format(best_face_num), best_face_num)
+
+    faces, landmarks = best_faces, best_landmarks
     # 计算人脸坐标
     left = faces[0][0]
     top = faces[0][1]
@@ -65,7 +122,6 @@ def detect_face_mtcnn(ctx: Context, scale: int = 2):
     ctx.face["rectangle"] = (left, top, width, height)
 
     # 根据landmarks计算人脸偏转角度，以眼睛为标准，计算的人脸偏转角度，用于人脸矫正
-    # 示例landmarks [106.37181  150.77415  127.21012  108.369156 144.61522  105.24723 107.45625  133.62355  151.24269  153.34407 ]
     landmarks = landmarks[0]
     left_eye = np.array([landmarks[0], landmarks[5]])
     right_eye = np.array([landmarks[1], landmarks[6]])

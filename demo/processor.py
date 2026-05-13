@@ -22,6 +22,7 @@ import gradio as gr
 import os
 import cv2
 import time
+import logging
 from demo.locales import LOCALES
 from hivision.plugin.ai_enhance import AIEnhanceRequest, AIEnhanceService
 from hivision.plugin.ai_enhance.errors import AIEnhanceValidationError
@@ -32,6 +33,7 @@ AI_OUTFIT_TEMPLATE_DEFAULT = "business_suit_black"
 
 
 base_path = os.path.dirname(os.path.abspath(__file__))
+logger = logging.getLogger(__name__)
 
 class IDPhotoProcessor:
     def __init__(self):
@@ -82,6 +84,9 @@ class IDPhotoProcessor:
     ):
         # 初始化参数
         top_distance_min = top_distance_max - 0.02
+        mode_option, size_list_option = self._normalize_size_options(
+            mode_option, size_list_option, language
+        )
         # 得到render_option在LOCALES["render_mode"][language]["choices"]中的索引
         render_option_index = LOCALES["render_mode"][language]["choices"].index(
             render_option
@@ -169,7 +174,23 @@ class IDPhotoProcessor:
                 face_alignment_option,
                 horizontal_flip_option,
             )
-        except (FaceError, APIError):
+        except FaceError as err:
+            self._log_generation_error(
+                err,
+                input_image,
+                idphoto_json,
+                matting_model_option,
+                face_detect_option,
+            )
+            return self._handle_photo_generation_error(language)
+        except APIError as err:
+            self._log_generation_error(
+                err,
+                input_image,
+                idphoto_json,
+                matting_model_option,
+                face_detect_option,
+            )
             return self._handle_photo_generation_error(language)
 
         # 后处理生成的照片
@@ -188,6 +209,67 @@ class IDPhotoProcessor:
             ai_consent=ai_consent,
             ai_mode=ai_mode,
             ai_template_name=ai_template_name,
+        )
+
+
+    def _normalize_size_options(self, mode_option, size_list_option, language):
+        """兼容旧版 Gradio 状态把预设尺寸值传入 size_mode 的情况。"""
+        size_mode_choices = LOCALES["size_mode"][language]["choices"]
+        if mode_option in size_mode_choices:
+            return mode_option, size_list_option
+
+        preset_value = self._resolve_size_list_option(mode_option, language)
+        if preset_value is not None:
+            logger.warning(
+                "[WebUI] size_mode received preset size %r; treating it as size_list_option=%r",
+                mode_option,
+                preset_value,
+            )
+            return size_mode_choices[0], preset_value
+
+        logger.warning(
+            "[WebUI] unknown size_mode %r; fallback to %r",
+            mode_option,
+            size_mode_choices[0],
+        )
+        return size_mode_choices[0], size_list_option
+
+
+    def _resolve_size_list_option(self, value, language):
+        size_list_choices = LOCALES["size_list"][language]["choices"]
+        size_list_develop = LOCALES["size_list"][language]["develop"]
+        if value in size_list_develop:
+            return value
+        if value in size_list_choices:
+            return value
+        if isinstance(value, str):
+            value_prefix = value.split()[0]
+            for choice in size_list_choices:
+                if choice.split()[0] == value_prefix:
+                    return choice
+        return None
+
+    def _log_generation_error(
+        self,
+        err,
+        input_image,
+        idphoto_json,
+        matting_model_option,
+        face_detect_option,
+    ):
+        input_shape = getattr(input_image, "shape", None)
+        logger.exception(
+            "[WebUI] photo generation failed: error_type=%s face_num=%s "
+            "matting_model=%s face_detect_model=%s input_shape=%s "
+            "size_mode=%s size_name=%s target_size=%s",
+            err.__class__.__name__,
+            getattr(err, "face_num", None),
+            matting_model_option,
+            face_detect_option,
+            input_shape,
+            idphoto_json.get("size_mode"),
+            idphoto_json.get("size_name"),
+            idphoto_json.get("size"),
         )
 
     # 初始化idphoto_json字典
@@ -228,6 +310,7 @@ class IDPhotoProcessor:
         """处理尺寸模式"""
         # 如果选择了尺寸列表
         if idphoto_json["size_mode"] == LOCALES["size_mode"][language]["choices"][0]:
+            idphoto_json["size_name"] = size_list_option
             idphoto_json["size"] = LOCALES["size_list"][language]["develop"][
                 size_list_option
             ]
