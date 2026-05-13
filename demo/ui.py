@@ -729,6 +729,15 @@ def create_ui(
                             value=ai_locale["outfit_template_choices"][0],
                         )
                     }
+                if ai_mode_value == "social_photo":
+                    return {
+                        ai_template_name: gr.update(
+                            visible=True,
+                            label=ai_locale["social_photo_template_label"],
+                            choices=ai_locale["social_photo_template_choices"],
+                            value=ai_locale["social_photo_template_choices"][0],
+                        )
+                    }
                 return {
                     ai_template_name: gr.update(
                         visible=False,

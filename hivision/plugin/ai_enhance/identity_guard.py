@@ -210,6 +210,17 @@ def _limits_for_mode(mode: str) -> Dict[str, float]:
             "non_edit_changed_ratio": 0.08,
             "total_changed_ratio": 0.65,
         }
+    if mode == "social_photo":
+        return {
+            "protected_mean_delta": 8.5,
+            "protected_p95_delta": 26.0,
+            "protected_changed_ratio": 0.06,
+            "protected_edge_delta": 0.06,
+            "protected_blue_shift": 11.0,
+            "background_changed_ratio": 0.95,
+            "non_edit_changed_ratio": 0.24,
+            "total_changed_ratio": 0.85,
+        }
     if mode == "background_template":
         return {
             "protected_mean_delta": 8.0,

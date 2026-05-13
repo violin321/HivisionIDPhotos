@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 from .errors import AIEnhanceValidationError
 from .prompt_templates import render_prompt_template
 
-ALLOWED_MODES = {"repair", "background_template", "outfit"}
+ALLOWED_MODES = {"repair", "background_template", "outfit", "social_photo"}
 ALLOWED_PROVIDERS = {"gpt-image-2"}
 
 

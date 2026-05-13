@@ -130,6 +130,47 @@ def test_render_prompt_template_distinguishes_outfits() -> None:
     assert_true("business_suit_navy" in navy.prompt, "navy prompt should include template name")
 
 
+def test_social_photo_templates_keys_and_hashes_are_distinct() -> None:
+    service = AIEnhanceService(provider_map={"gpt-image-2": EchoProvider()})
+    outputs = [
+        service.enhance(make_request(mode="social_photo", template_name=name))
+        for name in ("resume_clean", "linkedin_professional", "soft_profile")
+    ]
+    for output, name in zip(outputs, ("resume_clean", "linkedin_professional", "soft_profile")):
+        assert_true(output.status is True, f"{name} social_photo request should pass")
+        assert_metadata_has_prompt_template(output)
+        assert_true(output.metadata.template_name == name, f"{name} template_name should be recorded")
+        assert_true(output.metadata.prompt_template_key == f"social_photo:v1:{name}", f"{name} key should include concrete template")
+    keys = {output.metadata.prompt_template_key for output in outputs}
+    hashes = {output.metadata.prompt_template_hash for output in outputs}
+    assert_true(len(keys) == 3, "social_photo template keys should be distinct")
+    assert_true(len(hashes) == 3, "social_photo template hashes should be distinct")
+
+
+def test_render_prompt_template_distinguishes_social_photo_templates() -> None:
+    rendered = [
+        render_prompt_template(mode="social_photo", template_name=name)
+        for name in ("resume_clean", "linkedin_professional", "soft_profile")
+    ]
+    assert_true({item.version for item in rendered} == {"v1"}, "social_photo default version should be v1")
+    assert_true(len({item.key for item in rendered}) == 3, "rendered social_photo keys should be distinct")
+    assert_true(len({item.hash for item in rendered}) == 3, "rendered social_photo hashes should be distinct")
+    for item, name in zip(rendered, ("resume_clean", "linkedin_professional", "soft_profile")):
+        assert_true(name in item.prompt, f"{name} prompt should include template name")
+
+
+def test_unknown_social_photo_template_is_controlled_validation_error() -> None:
+    service = AIEnhanceService(provider_map={"gpt-image-2": EchoProvider()})
+    try:
+        service.enhance(make_request(mode="social_photo", template_name="unknown_template"))
+    except AIEnhanceValidationError as exc:
+        message = str(exc)
+        assert_true("unsupported social_photo template_name" in message, "unknown template should explain unsupported template_name")
+        assert_true("unknown_template" in message, "unknown template error should include rejected template")
+        return
+    raise AssertionError("unknown social_photo template should raise AIEnhanceValidationError")
+
+
 def test_unknown_prompt_version_is_controlled_validation_error() -> None:
     service = AIEnhanceService(provider_map={"gpt-image-2": EchoProvider()})
     try:
@@ -147,6 +188,9 @@ def main() -> None:
     test_fallback_metadata_records_prompt_template()
     test_outfit_black_and_navy_keys_and_hashes_are_distinct()
     test_render_prompt_template_distinguishes_outfits()
+    test_social_photo_templates_keys_and_hashes_are_distinct()
+    test_render_prompt_template_distinguishes_social_photo_templates()
+    test_unknown_social_photo_template_is_controlled_validation_error()
     test_unknown_prompt_version_is_controlled_validation_error()
     print("AI prompt template tests passed")
 

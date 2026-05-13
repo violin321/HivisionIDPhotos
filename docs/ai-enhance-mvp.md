@@ -9,6 +9,7 @@ Phase 1 提供一个**独立**的 AI 增强插件骨架和独立 `POST /ai_enhan
 - `mode=repair`
 - `mode=background_template`
 - `mode=outfit`（Beta：AI 正装预览，仅用于简历头像/形象照参考，不建议作为正式证件照提交）
+- `mode=social_photo`（AI 社交/简历头像，仅非正式用途；不作为正式证件照）
 - `provider=gpt-image-2`
 
 Phase 3A 在此基础上补了三类能力：
@@ -68,11 +69,11 @@ AI_ENHANCE_ESTIMATED_COST_PER_REQUEST=0.15  # 可选，估算单次请求成本
 以 `multipart/form-data` 提交：
 
 - `input_image_base64`：必填，base64 图片，可带 `data:image/...;base64,` 前缀
-- `mode`：必填，`repair` / `background_template` / `outfit`
+- `mode`：必填，`repair` / `background_template` / `outfit` / `social_photo`
 - `provider`：可选，当前仅支持 `gpt-image-2`
 - `consent`：可选，默认 `false`
 - `prompt`：可选，追加保守补充说明
-- `template_name`：可选，`background_template` 的背景模板名，或 `outfit` 的正装模板名
+- `template_name`：可选，`background_template` 的背景模板名、`outfit` 的正装模板名，或 `social_photo` 的头像模板名（`resume_clean` / `linkedin_professional` / `soft_profile`）
 - `return_base64`：可选，默认 `true`
 - `client_id`：可选，用于区分调用方限流窗口；未传时为全局 key
 - `mask_base64`：可选，编辑 mask。当前 `outfit` WebUI 路径会内部生成；外部调用通常无需手动传
@@ -124,6 +125,20 @@ curl -X POST http://127.0.0.1:8080/ai_enhance \
 ```
 
 `outfit` 仅作为 AI 正装预览 Beta，不作为正式证件照默认输出。当前实现优先采用 lower-body crop/composite：只把衣服/肩膀下半区 crop 给 provider，返回后合成回原图；同时保留 `mask_base64` / `edit_region` 字段，若后续 provider 明确支持 `images + mask`，可直接走 mask edit。
+
+### 5) social_photo 非正式社交/简历头像
+
+```bash
+curl -X POST http://127.0.0.1:8080/ai_enhance \
+  -F 'input_image_base64=data:image/png;base64,AAA...' \
+  -F 'mode=social_photo' \
+  -F 'template_name=resume_clean' \
+  -F 'provider=gpt-image-2' \
+  -F 'consent=true' \
+  -F 'client_id=webui'
+```
+
+`social_photo` 仅用于 AI 社交/简历头像预览等非正式用途，不作为正式证件照输出。Prompt 明确要求保持身份、脸型、五官、年龄和发型主体，不生成正式证件照，不夸张美化；输出仍通过 identity guard，异常时 fallback，不影响正式 IDCreator 主链路结果。
 
 ## 响应示例
 
@@ -341,7 +356,7 @@ python3 scripts/test-ai-outfit-mask-guard.py
 
 - 当前只实现单 provider：`gpt-image-2`
 - provider 接口按 OpenAI Images API 兼容方式封装，便于后续替换 endpoint
-- `outfit` 仍为 Beta 预览能力；未实现 social_photo
+- `outfit` 仍为 Beta 预览能力；`social_photo` 为非正式头像预览能力
 - fallback 当前返回原图，不做本地增强替代算法
 - AI 输出仍只作为预览/独立接口结果，不替换正式证件照默认输出
 - 进程内 limiter 不跨进程共享，若后续上多 worker，需要升级到共享状态或网关层限流

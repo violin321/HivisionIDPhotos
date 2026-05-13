@@ -214,7 +214,7 @@ python app.py
 
 - `启用 AI 增强预览`
 - `我已知晓该图片会上传到第三方 AI 服务`
-- `AI 模式`: `repair` / `background_template`
+- `AI 模式`: `repair` / `background_template` / `outfit` / `social_photo`（AI 社交/简历头像，仅非正式用途）
 - 输出区新增 `AI 预览图` 与 `AI 状态`
 
 说明：
@@ -222,7 +222,7 @@ python app.py
 - 该入口只新增可选的 AI 预览链路，不替换标准照、高清照、排版照、社交媒体模版照原有输出。
 - WebUI 内部直接 import `hivision.plugin.ai_enhance.AIEnhanceService` 调用，不通过 HTTP 回调自身 `/ai_enhance`。
 - 若未启用 AI 或未勾选同意上传，原证件照流程保持不变，AI 区域仅显示状态说明。
-- 当前 MVP 未实现 `outfit` / `social_photo` 等其他模式。
+- `outfit` 和 `social_photo` 均为 AI 预览能力：`outfit` 用于简历/形象照参考，`social_photo` 仅用于非正式社交/简历头像预览；二者都不替代正式证件照输出。
 
 <img src="assets/harry.png" width=900>
 

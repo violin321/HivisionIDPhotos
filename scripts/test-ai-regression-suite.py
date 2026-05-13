@@ -143,17 +143,20 @@ def main() -> None:
             skipped += 1
             continue
 
-        for mode in sample.get("modes", ["repair"]):
+        sample_modes = list(dict.fromkeys([*sample.get("modes", ["repair"]), "social_photo"]))
+        for mode in sample_modes:
             service = AIEnhanceService(provider_map={"gpt-image-2": EchoProvider()})
-            output = service.enhance(AIEnhanceRequest(input_image_base64=input_b64, mode=mode, consent=True, template_name="regression_template" if mode in {"background_template", "outfit"} else None, client_id="ai-regression"))
+            template_name = "regression_template" if mode in {"background_template", "outfit"} else "resume_clean" if mode == "social_photo" else None
+            output = service.enhance(AIEnhanceRequest(input_image_base64=input_b64, mode=mode, consent=True, template_name=template_name, client_id="ai-regression"))
             assert_true(output.status is True, f"{sample['id']} {mode} should pass basic guarded generation", output)
             assert_true(output.metadata.identity_guard_passed is True, f"{sample['id']} {mode} identity guard should pass", output)
             assert_true("protected_mean_delta" in output.metadata.identity_guard_metrics, f"{sample['id']} {mode} missing identity metrics", output)
             passed += 1
 
-        for mode in ("repair", "background_template"):
+        for mode in ("repair", "background_template", "social_photo"):
             service = AIEnhanceService(provider_map={"gpt-image-2": FaceTamperProvider()})
-            output = service.enhance(AIEnhanceRequest(input_image_base64=input_b64, mode=mode, consent=True, template_name="regression_template" if mode == "background_template" else None, client_id="ai-regression-tamper"))
+            template_name = "regression_template" if mode == "background_template" else "resume_clean" if mode == "social_photo" else None
+            output = service.enhance(AIEnhanceRequest(input_image_base64=input_b64, mode=mode, consent=True, template_name=template_name, client_id="ai-regression-tamper"))
             assert_true(output.status is False, f"{sample['id']} {mode} tamper should fallback", output)
             assert_true(output.metadata.identity_guard_passed is False, f"{sample['id']} {mode} should record guard failure", output)
             assert_true(output.metadata.error_code in {"IDENTITY_PROTECTED_REGION_CHANGED", "IDENTITY_STRUCTURE_CHANGED", "IDENTITY_FACE_COLOR_SHIFT", "AI_OUTPUT_MODIFIED_TOO_MUCH", "BACKGROUND_SPILL_DETECTED"}, f"{sample['id']} {mode} unexpected error {output.metadata.error_code}", output)

@@ -846,6 +846,7 @@ class IDPhotoProcessor:
         template_defaults = {
             "background_template": AI_BACKGROUND_TEMPLATE_DEFAULT,
             "outfit": AI_OUTFIT_TEMPLATE_DEFAULT,
+            "social_photo": "resume_clean",
         }
         effective_template_name = None
         if ai_mode in template_defaults:
@@ -921,6 +922,8 @@ class IDPhotoProcessor:
             if metadata.validation_passed
             else LOCALES["ai_enhance"][language]["validation_fail_label"],
         ]
+        if metadata.mode == "social_photo":
+            parts.append(LOCALES["ai_enhance"][language]["social_photo_notice_status"])
         if metadata.mode == "outfit":
             parts.append(LOCALES["ai_enhance"][language]["outfit_notice_status"])
             parts.append(f"mask_edit={getattr(metadata, 'mask_edit', False)}")

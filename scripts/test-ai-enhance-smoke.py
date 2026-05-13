@@ -351,6 +351,38 @@ def test_outfit_template_usage_log_and_prompt() -> None:
     os.unlink(usage_file.name)
 
 
+def test_social_photo_template_usage_log_prompt_and_metadata() -> None:
+    usage_file = tempfile.NamedTemporaryFile(prefix="ai-usage-", suffix=".jsonl", delete=False)
+    usage_file.close()
+    service = AIEnhanceService(
+        provider_map={"gpt-image-2": FakeGoodProvider()},
+        usage_logger=TempUsageLogger(usage_file.name, estimated_cost=0.91),
+    )
+    output = service.enhance(make_request(mode="social_photo", template_name="resume_clean", client_id="social-client"))
+    assert_true(output.status is True, "social_photo good provider should pass")
+    assert_true(output.metadata.mode == "social_photo", "social_photo mode should be recorded")
+    assert_true(output.metadata.template_name == "resume_clean", "social_photo template should pass through metadata")
+    assert_true(output.metadata.prompt_template_key == "social_photo:v1:resume_clean", "social_photo key should include concrete template")
+    assert_true(output.metadata.prompt_template_version == "v1", "social_photo template version should be v1")
+    assert_true(bool(output.metadata.prompt_template_hash), "social_photo prompt hash should be recorded")
+    assert_true(output.metadata.identity_guard_passed is True, "social_photo should run identity guard")
+    assert_true(output.metadata.face_protected is True, "social_photo should mark face protection")
+
+    payload = json.loads(Path(usage_file.name).read_text(encoding="utf-8").strip().splitlines()[-1])
+    assert_true(payload["mode"] == "social_photo", "usage log should record social_photo mode")
+    assert_true(payload["template_name"] == "resume_clean", "usage log should record social_photo template")
+    assert_true(payload["prompt_template_key"] == "social_photo:v1:resume_clean", "usage log should record social_photo prompt key")
+    assert_true(payload["prompt_template_version"] == "v1", "usage log should record social_photo version")
+    assert_true(bool(payload["prompt_template_hash"]), "usage log should record social_photo hash")
+
+    prompt = GPTImage2Provider()._build_prompt(make_request(mode="social_photo", template_name="resume_clean"))
+    prompt_lower = prompt.lower()
+    assert_true("Target social_photo template: resume_clean" in prompt, "social_photo prompt should include template name")
+    for required in ("informal use only", "preserve", "face shape", "facial features", "age", "hairstyle", "not an official id photo", "do not", "exaggerated beautification"):
+        assert_true(required in prompt_lower, f"social_photo prompt should contain '{required}'")
+    os.unlink(usage_file.name)
+
+
 def test_metadata_fields_exist() -> None:
     usage_file = tempfile.NamedTemporaryFile(prefix="ai-usage-", suffix=".jsonl", delete=False)
     usage_file.close()
@@ -400,6 +432,7 @@ def main() -> None:
     test_concurrency_guard()
     test_usage_log_and_no_base64()
     test_outfit_template_usage_log_and_prompt()
+    test_social_photo_template_usage_log_prompt_and_metadata()
     test_metadata_fields_exist()
     test_identity_guard_metadata_and_usage_log()
     print("AI enhance smoke tests passed")

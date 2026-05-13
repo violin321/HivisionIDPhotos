@@ -36,6 +36,16 @@ _MODE_PROMPTS: Dict[str, Dict[str, str]] = {
             " Do not beautify, reshape, relight dramatically, change the background, or alter any non-clothing pixels unless needed for seamless clothing edges."
         ),
     },
+    "social_photo": {
+        "v1": (
+            "Create a conservative AI social/resume portrait preview for informal use only. This is not an official ID photo and must not be presented as suitable"
+            " for official identity documents, passports, visas, or government submissions. Preserve the same person exactly: identity, face shape, facial features,"
+            " age, skin texture, hairstyle main structure, expression, pose, camera angle, and natural proportions. Keep styling realistic and restrained; do not"
+            " exaggerate beautification, reshape the face, change age, change the core hairstyle, add accessories, add logos/text, create a document layout, or generate"
+            " a formal certificate/ID-photo output. Any background or lighting refinement must remain subtle, professional, and must not spill into the face, hair, neck,"
+            " or clothing."
+        ),
+    },
 }
 
 _BACKGROUND_TEMPLATE_PROMPTS: Dict[str, str] = {
@@ -52,6 +62,12 @@ _OUTFIT_TEMPLATE_PROMPTS: Dict[str, str] = {
     "business_suit_gray": "Change only the visible upper-body clothing to a conservative gray business suit jacket with a simple light shirt. Keep it neat, realistic, and understated.",
     "white_shirt": "Change only the visible upper-body clothing to a clean plain white business shirt. Keep it professional, realistic, and understated.",
     "business_casual": "Change only the visible upper-body clothing to conservative business-casual attire, such as a simple blazer or neat collared shirt. Keep it professional and restrained.",
+}
+
+_SOCIAL_PHOTO_TEMPLATE_PROMPTS: Dict[str, str] = {
+    "resume_clean": "Use a clean resume portrait style: neutral studio lighting, simple professional background, natural skin tone, restrained grooming, and no decorative elements.",
+    "linkedin_professional": "Use a polished but conservative LinkedIn-style profile portrait: soft professional lighting, neutral background, credible business tone, no logos, text, props, or dramatic effects.",
+    "soft_profile": "Use a soft profile portrait style: gentle natural lighting, warm neutral background, approachable but realistic appearance, no glamour retouching or exaggerated beautification.",
 }
 
 
@@ -112,6 +128,17 @@ def render_prompt_template(
         parts.append(f"Target outfit template: {template_name}. {template_prompt}")
         parts.append(
             "Hard constraints: replace clothing only inside the provided clothing mask, covering the full visible jacket/coat, shirt, lapels, shoulders, outer coat edges, and hem. Blend the collar/neck boundary naturally. Keep face, hair, ears, upper neck, crop, and background unchanged. Do not create a new headshot, avatar image, sample card, border, frame, or embedded image."
+        )
+    elif mode == "social_photo" and template_name:
+        if template_name not in _SOCIAL_PHOTO_TEMPLATE_PROMPTS:
+            raise AIEnhanceValidationError(
+                f"unsupported social_photo template_name '{template_name}'; available: {', '.join(sorted(_SOCIAL_PHOTO_TEMPLATE_PROMPTS))}"
+            )
+        template_prompt = _SOCIAL_PHOTO_TEMPLATE_PROMPTS[template_name]
+        key_parts.append(template_name)
+        parts.append(f"Target social_photo template: {template_name}. {template_prompt}")
+        parts.append(
+            "Hard constraints: informal social/resume preview only; preserve identity, face shape, facial features, age, and main hairstyle; do not create an official ID photo, passport photo, visa photo, document layout, or exaggerated beautification."
         )
 
     if user_prompt and user_prompt.strip():
