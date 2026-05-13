@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional
 
 from .errors import AIEnhanceValidationError
+from .prompt_templates import render_prompt_template
 
 ALLOWED_MODES = {"repair", "background_template", "outfit"}
 ALLOWED_PROVIDERS = {"gpt-image-2"}
@@ -17,6 +18,7 @@ class AIEnhanceRequest:
     consent: bool = False
     prompt: Optional[str] = None
     template_name: Optional[str] = None
+    prompt_version: Optional[str] = None
     return_base64: bool = True
     client_id: Optional[str] = None
     mask_base64: Optional[str] = None
@@ -33,6 +35,12 @@ class AIEnhanceRequest:
             raise AIEnhanceValidationError(
                 f"provider must be one of: {', '.join(sorted(ALLOWED_PROVIDERS))}"
             )
+        render_prompt_template(
+            mode=self.mode,
+            prompt_version=self.prompt_version,
+            template_name=self.template_name,
+            user_prompt=self.prompt,
+        )
         return self
 
     def to_safe_dict(self) -> Dict[str, Any]:
@@ -62,6 +70,9 @@ class AIEnhanceMetadata:
     rate_limited: bool = False
     usage_logged: bool = False
     template_name: Optional[str] = None
+    prompt_template_key: Optional[str] = None
+    prompt_template_version: Optional[str] = None
+    prompt_template_hash: Optional[str] = None
     mask_edit: bool = False
     crop_edit: bool = False
     face_protected: bool = False

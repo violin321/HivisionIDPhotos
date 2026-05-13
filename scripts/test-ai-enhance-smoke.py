@@ -364,6 +364,10 @@ def test_metadata_fields_exist() -> None:
     assert_true(metadata.estimated_cost == 0.56, "estimated_cost missing")
     assert_true(metadata.rate_limited is False, "rate_limited should be false for success")
     assert_true(metadata.usage_logged is True, "usage_logged should be true")
+    assert_true(bool(metadata.prompt_template_key), "prompt_template_key missing")
+    assert_true(bool(metadata.prompt_template_version), "prompt_template_version missing")
+    assert_true(bool(metadata.prompt_template_hash), "prompt_template_hash missing")
+    assert_true(metadata.prompt_template_version == "v1", "default prompt template version should be v1")
     os.unlink(usage_file.name)
 
 

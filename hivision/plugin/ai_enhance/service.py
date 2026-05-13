@@ -17,6 +17,7 @@ from .outfit_protection import (
     composite_crop,
     crop_request_image,
 )
+from .prompt_templates import render_prompt_template
 from .providers import GPTImage2Provider
 from .rate_limit import RATE_LIMITER
 from .schemas import AIEnhanceMetadata, AIEnhanceOutput, AIEnhanceRequest
@@ -34,6 +35,12 @@ class AIEnhanceService:
 
     def enhance(self, request: AIEnhanceRequest) -> AIEnhanceOutput:
         request.validate()
+        prompt_template = render_prompt_template(
+            mode=request.mode,
+            prompt_version=request.prompt_version,
+            template_name=request.template_name,
+            user_prompt=request.prompt,
+        )
         started_at = time.time()
         request_id = uuid.uuid4().hex
         estimated_cost = self.usage_logger.estimated_cost()
@@ -300,6 +307,9 @@ class AIEnhanceService:
                 rate_limited=False,
                 usage_logged=False,
                 template_name=request.template_name if request.mode in {"background_template", "outfit"} else None,
+                prompt_template_key=prompt_template.key,
+                prompt_template_version=prompt_template.version,
+                prompt_template_hash=prompt_template.hash,
                 mask_edit=mask_edit,
                 crop_edit=crop_edit,
                 face_protected=face_protected or request.mode in {"repair", "background_template"},
@@ -337,6 +347,12 @@ class AIEnhanceService:
         identity_guard_metrics: Optional[dict] = None,
         edit_region: Optional[dict] = None,
     ) -> AIEnhanceOutput:
+        prompt_template = render_prompt_template(
+            mode=request.mode,
+            prompt_version=request.prompt_version,
+            template_name=request.template_name,
+            user_prompt=request.prompt,
+        )
         output = AIEnhanceOutput(
             status=False,
             image_base64=request.input_image_base64 if request.return_base64 else None,
@@ -358,6 +374,9 @@ class AIEnhanceService:
                 rate_limited=rate_limited,
                 usage_logged=False,
                 template_name=request.template_name if request.mode in {"background_template", "outfit"} else None,
+                prompt_template_key=prompt_template.key,
+                prompt_template_version=prompt_template.version,
+                prompt_template_hash=prompt_template.hash,
                 mask_edit=mask_edit,
                 crop_edit=crop_edit,
                 face_protected=face_protected,
@@ -388,6 +407,9 @@ class AIEnhanceService:
                 "estimated_cost": metadata.estimated_cost,
                 "rate_limited": metadata.rate_limited,
                 "template_name": metadata.template_name,
+                "prompt_template_key": metadata.prompt_template_key,
+                "prompt_template_version": metadata.prompt_template_version,
+                "prompt_template_hash": metadata.prompt_template_hash,
                 "mask_edit": metadata.mask_edit,
                 "crop_edit": metadata.crop_edit,
                 "face_protected": metadata.face_protected,
