@@ -116,9 +116,10 @@ class GPTImage2Provider(BaseAIEnhanceProvider):
                 " Do not beautify, reshape, add accessories, or alter identity."
             ),
             "outfit": (
-                "Replace only the visible upper-body clothing. Do not generate a new headshot, avatar image, sample card, photo frame, embedded image,"
-                " nested photo, document layout, or any picture-in-picture composition. Keep the same person, identity, face, hair, ears, upper neck, skin tone,"
-                " expression, pose, shoulder line, crop, camera angle, background, and lighting exactly unchanged. Preserve the existing framing and continue the"
+                "Replace only the visible upper-body clothing, including the entire visible coat/jacket and shirt, lapels, shoulders, outer coat edges, and lower hem."
+                " Blend the collar and neck boundary naturally so there is no hard cut between skin, neck, shirt, and jacket. Do not generate a new headshot, avatar image,"
+                " sample card, photo frame, embedded image, nested photo, document layout, or any picture-in-picture composition. Keep the same person, identity, face, hair,"
+                " ears, upper neck, skin tone, expression, pose, crop, camera angle, background, and lighting exactly unchanged. Preserve the existing framing and continue the"
                 " original background naturally around the edited clothes. Do not add accessories, logos, jewelry, props, text, borders, cards, or decorative elements."
                 " Do not beautify, reshape, relight dramatically, change the background, or alter any non-clothing pixels unless needed for seamless clothing edges."
             ),
@@ -141,7 +142,7 @@ class GPTImage2Provider(BaseAIEnhanceProvider):
             )
             optional_parts.append(f"Target outfit template: {request.template_name}. {template_prompt}")
             optional_parts.append(
-                "Hard constraints: replace clothing only inside the provided clothing mask. Keep face, hair, ears, upper neck, shoulder line, crop, and background unchanged. Do not create a new headshot, avatar image, sample card, border, frame, or embedded image."
+                "Hard constraints: replace clothing only inside the provided clothing mask, covering the full visible jacket/coat, shirt, lapels, shoulders, outer coat edges, and hem. Blend the collar/neck boundary naturally. Keep face, hair, ears, upper neck, crop, and background unchanged. Do not create a new headshot, avatar image, sample card, border, frame, or embedded image."
             )
         if request.prompt:
             optional_parts.append(f"Additional user instruction: {request.prompt.strip()}")

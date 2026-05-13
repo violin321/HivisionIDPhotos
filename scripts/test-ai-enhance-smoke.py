@@ -342,6 +342,8 @@ def test_outfit_template_usage_log_and_prompt() -> None:
     prompt_lower = prompt.lower()
     assert_true("Target outfit template: business_suit_black" in prompt, "outfit prompt should include template name")
     assert_true("replace only the visible upper-body clothing" in prompt_lower, "outfit prompt should constrain clothing-only edits")
+    assert_true("lapels, shoulders, outer coat edges" in prompt_lower, "outfit prompt should request complete jacket replacement")
+    assert_true("blend the collar/neck boundary naturally" in prompt_lower, "outfit prompt should request natural neck/collar blending")
     assert_true("background unchanged" in prompt_lower, "outfit prompt should preserve background")
     for forbidden in ("portrait", "profile", "preview", "resume"):
         assert_true(forbidden not in prompt_lower, f"outfit prompt should not contain '{forbidden}'")

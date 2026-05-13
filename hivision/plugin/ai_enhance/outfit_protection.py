@@ -39,12 +39,15 @@ def build_outfit_edit_plan(image_base64: str) -> OutfitEditPlan:
         raise ValueError("Cannot build outfit edit plan for invalid image")
 
     height, width = image.shape[:2]
-    # Conservative portrait heuristic: keep face/hair/ears/upper neck outside the
-    # editable area. For ID-photo crops, the shoulders/clothes usually start in
-    # the lower half; adding a small side margin avoids cutting jacket shoulders.
-    y1 = int(height * 0.56)
+    # Conservative portrait heuristic: keep face/hair/ears outside the editable
+    # area, while starting the crop high enough to include the collar, lapels and
+    # upper jacket shoulders.  The mask below still keeps the top/chin side soft-
+    # protected, so the provider can blend the neck/collar seam without repainting
+    # the face.  A narrow side margin preserves background while avoiding clipped
+    # outer coat edges on tight ID-photo crops.
+    y1 = int(height * 0.48)
     y2 = height
-    x_margin = int(width * 0.04)
+    x_margin = int(width * 0.02)
     x1 = max(0, x_margin)
     x2 = min(width, width - x_margin)
 
@@ -70,12 +73,12 @@ def build_outfit_edit_plan(image_base64: str) -> OutfitEditPlan:
 
 
 def _build_clothing_only_mask(crop_h: int, crop_w: int) -> np.ndarray:
-    """Return a conservative lower-body clothing mask for outfit edits.
+    """Return a clothing mask for complete outfit replacement.
 
-    The provider is allowed to edit only a tapered torso/shoulder area.  The top
-    edge, crop sides, and shoulder-outside/background area stay black so provider
-    failures cannot repaint the entire lower crop or paste a generated card back
-    over the original portrait.
+    The provider is allowed to edit the visible jacket/shirt silhouette including
+    shoulders, lapels, outer coat edges and lower hem.  The top edge and extreme
+    crop sides stay protected so provider failures cannot repaint the face or
+    paste a generated card back over the original portrait.
     """
 
     if crop_h <= 0 or crop_w <= 0:
@@ -85,11 +88,12 @@ def _build_clothing_only_mask(crop_h: int, crop_w: int) -> np.ndarray:
     y_norm = yy.astype(np.float32) / max(1.0, float(crop_h - 1))
     x_norm = xx.astype(np.float32) / max(1.0, float(crop_w - 1))
 
-    # Protect the neck/collar boundary and the outside background.  Width expands
-    # downward to include jacket shoulders while keeping the upper side margins
-    # unavailable to the model.
-    top_guard = 0.08
-    half_width = 0.24 + 0.22 * np.clip((y_norm - top_guard) / (1.0 - top_guard), 0.0, 1.0)
+    # Protect the chin/face boundary and the outside background.  Width starts
+    # broad enough for lapels/upper shoulders and expands downward to include the
+    # complete jacket body and lower hem.
+    top_guard = 0.06
+    expand = np.clip((y_norm - top_guard) / (1.0 - top_guard), 0.0, 1.0)
+    half_width = 0.34 + 0.16 * np.power(expand, 0.72)
     torso = (y_norm >= top_guard) & (np.abs(x_norm - 0.5) <= half_width)
 
     mask = np.zeros((crop_h, crop_w), dtype=np.uint8)
@@ -97,13 +101,13 @@ def _build_clothing_only_mask(crop_h: int, crop_w: int) -> np.ndarray:
 
     # Feather only the mask edge used for compositing; keep a real black outside
     # region so APIs that honor masks also avoid non-clothing pixels.
-    kernel = max(3, int(round(min(crop_h, crop_w) * 0.025)) | 1)
+    kernel = max(5, int(round(min(crop_h, crop_w) * 0.04)) | 1)
     mask = cv2.GaussianBlur(mask, (kernel, kernel), 0)
-    mask[mask < 16] = 0
-    side_guard = max(1, int(round(crop_w * 0.04)))
+    mask[mask < 10] = 0
+    side_guard = max(1, int(round(crop_w * 0.02)))
     mask[:, :side_guard] = 0
     mask[:, crop_w - side_guard :] = 0
-    mask[: max(1, int(round(crop_h * top_guard * 0.75))), :] = 0
+    mask[: max(1, int(round(crop_h * top_guard * 0.60))), :] = 0
     return mask
 
 
@@ -144,11 +148,28 @@ def composite_crop(
         mask = mask[:, :, 0]
     if mask.shape[:2] != (target_h, target_w):
         mask = cv2.resize(mask, (target_w, target_h), interpolation=cv2.INTER_AREA)
-    alpha = np.clip(mask.astype(np.float32) / 255.0, 0.0, 1.0)[:, :, None]
+    alpha_mask = _build_soft_composite_alpha(mask, target_h, target_w)
+    alpha = np.clip(alpha_mask.astype(np.float32) / 255.0, 0.0, 1.0)[:, :, None]
 
     blended = np.clip(original_crop * (1.0 - alpha) + edited_rgb * alpha, 0, 255).astype(result.dtype)
     result[y1:y2, x1:x2, :3] = blended
     return numpy_2_base64(result)
+
+
+def _build_soft_composite_alpha(mask: np.ndarray, target_h: int, target_w: int) -> np.ndarray:
+    """Build a softer alpha for neck/collar and jacket-edge compositing."""
+
+    alpha = mask.astype(np.uint8, copy=False)
+    feather = max(5, int(round(min(target_h, target_w) * 0.055)) | 1)
+    alpha = cv2.GaussianBlur(alpha, (feather, feather), 0)
+    # Keep the absolute crop top and extreme side guards intact after the extra
+    # blur, but preserve a gradual transition immediately below them.
+    top_guard_px = max(1, int(round(target_h * 0.05)))
+    side_guard_px = max(1, int(round(target_w * 0.015)))
+    alpha[:top_guard_px, :] = 0
+    alpha[:, :side_guard_px] = 0
+    alpha[:, target_w - side_guard_px :] = 0
+    return alpha
 
 
 def check_nested_photo_artifact(

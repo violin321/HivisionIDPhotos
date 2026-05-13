@@ -9,6 +9,7 @@ import numpy as np
 
 from hivision.plugin.ai_enhance import AIEnhanceOutput, AIEnhanceRequest, AIEnhanceService
 from hivision.plugin.ai_enhance.outfit_protection import (
+    _build_soft_composite_alpha,
     build_outfit_edit_plan,
     check_nested_photo_artifact,
     check_protected_region_color,
@@ -73,10 +74,37 @@ def test_outfit_edit_plan_builds_crop_sized_mask() -> None:
     assert_true(plan.crop_box[1] == y1, "crop should start at protected boundary")
     assert_true(mask.shape[:2] == (y2 - y1, x2 - x1), "mask must match crop size")
     assert_true(mask.min() == 0 and mask.max() == 255, "crop mask should protect non-clothing pixels")
-    assert_true(mask[: max(1, mask.shape[0] // 20)].max() == 0, "top crop edge must stay protected")
-    assert_true(mask[:, : max(1, mask.shape[1] // 25)].max() == 0, "crop side edge must stay protected")
+    assert_true(mask[: max(1, mask.shape[0] // 30)].max() == 0, "top crop edge must stay protected")
+    assert_true(mask[:, : max(1, mask.shape[1] // 60)].max() == 0, "crop side edge must stay protected")
     assert_true(plan.edit_region["protected_y_max"] == y1, "protected boundary should match crop start")
     assert_true(plan.edit_region["strategy"] == "masked_crop_composite", "outfit should use masked composite strategy")
+
+
+def test_outfit_mask_covers_complete_jacket_edges_and_soft_alpha() -> None:
+    source = make_portrait_base64()
+    plan = build_outfit_edit_plan(source)
+    mask = base64_2_numpy(plan.mask_base64)
+    assert_true(mask is not None, "mask should decode")
+    crop_h, crop_w = mask.shape[:2]
+    shoulder_y = max(0, int(crop_h * 0.16))
+    lower_y = max(0, int(crop_h * 0.80))
+
+    shoulder_row = mask[shoulder_y]
+    lower_row = mask[lower_y]
+    shoulder_xs = np.where(shoulder_row > 0)[0]
+    lower_xs = np.where(lower_row > 0)[0]
+    assert_true(shoulder_xs.size > 0, "upper shoulder/lapel row should be editable")
+    assert_true(lower_xs.size > 0, "lower jacket row should be editable")
+    assert_true(shoulder_xs[0] <= int(crop_w * 0.15), "mask should reach left upper jacket/lapel area")
+    assert_true(shoulder_xs[-1] >= int(crop_w * 0.85), "mask should reach right upper jacket/lapel area")
+    assert_true(lower_xs[0] <= int(crop_w * 0.04), "mask should reach left lower outer coat edge")
+    assert_true(lower_xs[-1] >= int(crop_w * 0.96), "mask should reach right lower outer coat edge")
+
+    alpha = _build_soft_composite_alpha(mask, crop_h, crop_w)
+    unique_values = np.unique(alpha)
+    assert_true(unique_values.size > 16, "feather alpha should be non-binary/soft")
+    assert_true(np.any((alpha > 0) & (alpha < 255)), "feather alpha must contain transition pixels")
+    assert_true(alpha[: max(1, crop_h // 30)].max() == 0, "soft alpha should preserve top face guard")
 
 
 def test_crop_composite_preserves_protected_region() -> None:
@@ -191,7 +219,7 @@ def test_masked_composite_preserves_crop_background_and_edges() -> None:
     assert_true(original is not None and result is not None, "images should decode")
     x1, y1, x2, y2 = plan.crop_box
     top_guard_h = max(1, crop_h // 20)
-    side_guard_w = max(1, crop_w // 25)
+    side_guard_w = max(1, crop_w // 60)
     assert_true(
         np.abs(result[y1 : y1 + top_guard_h, x1:x2, :3].astype(np.int16) - original[y1 : y1 + top_guard_h, x1:x2, :3].astype(np.int16)).max() == 0,
         "masked composite should preserve crop top guard/background",
@@ -213,6 +241,7 @@ def test_outfit_protected_region_change_still_fallbacks() -> None:
 
 def main() -> None:
     test_outfit_edit_plan_builds_crop_sized_mask()
+    test_outfit_mask_covers_complete_jacket_edges_and_soft_alpha()
     test_crop_composite_preserves_protected_region()
     test_color_guard_detects_protected_change()
     test_service_sets_outfit_metadata_and_sends_crop_request()
