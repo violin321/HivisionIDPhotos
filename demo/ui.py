@@ -151,6 +151,29 @@ def create_ui(
                             value=LOCALES["plugin"][DEFAULT_LANG]["value"]
                         )
 
+                    with gr.Accordion(
+                        LOCALES["ai_enhance"][DEFAULT_LANG]["section_label"], open=False
+                    ) as ai_enhance_accordion:
+                        enable_ai_enhance = gr.Checkbox(
+                            label=LOCALES["ai_enhance"][DEFAULT_LANG]["enable_label"],
+                            value=False,
+                        )
+                        ai_consent = gr.Checkbox(
+                            label=LOCALES["ai_enhance"][DEFAULT_LANG]["consent_label"],
+                            value=False,
+                        )
+                        ai_mode = gr.Dropdown(
+                            choices=LOCALES["ai_enhance"][DEFAULT_LANG]["mode_choices"],
+                            label=LOCALES["ai_enhance"][DEFAULT_LANG]["mode_label"],
+                            value=LOCALES["ai_enhance"][DEFAULT_LANG]["mode_choices"][0],
+                        )
+                        ai_template_name = gr.Dropdown(
+                            choices=LOCALES["ai_enhance"][DEFAULT_LANG]["template_choices"],
+                            label=LOCALES["ai_enhance"][DEFAULT_LANG]["template_label"],
+                            value=LOCALES["ai_enhance"][DEFAULT_LANG]["template_choices"][0],
+                            visible=False,
+                        )
+
                 # TAB2 - 高级参数 ------------------------------------------------
                 with gr.Tab(
                     LOCALES["advance_param"][DEFAULT_LANG]["label"]
@@ -404,6 +427,25 @@ def create_ui(
                         height=350,
                         format="png",
                     )
+                with gr.Accordion(
+                    LOCALES["ai_enhance"][DEFAULT_LANG]["preview_label"], open=False
+                ) as ai_preview_accordion:
+                    ai_status_text = gr.Markdown(
+                        value=LOCALES["ai_enhance"][DEFAULT_LANG]["initial_status"],
+                        label=LOCALES["ai_enhance"][DEFAULT_LANG]["status_label"],
+                        visible=True,
+                    )
+                    with gr.Row():
+                        ai_input_preview_image = gr.Image(
+                            label=LOCALES["ai_enhance"][DEFAULT_LANG]["input_preview_label"],
+                            height=350,
+                            format="png",
+                        )
+                        ai_output_preview_image = gr.Image(
+                            label=LOCALES["ai_enhance"][DEFAULT_LANG]["output_preview_label"],
+                            height=350,
+                            format="png",
+                        )
                 # 抠图图像
                 with gr.Accordion(
                     LOCALES["matting_image"][DEFAULT_LANG]["label"], open=False
@@ -577,6 +619,40 @@ def create_ui(
                         choices=LOCALES["print_switch"][language]["choices"],
                         value=LOCALES["print_switch"][language]["choices"][0],
                     ),
+                    ai_enhance_accordion: gr.update(
+                        label=LOCALES["ai_enhance"][language]["section_label"]
+                    ),
+                    enable_ai_enhance: gr.update(
+                        label=LOCALES["ai_enhance"][language]["enable_label"]
+                    ),
+                    ai_consent: gr.update(
+                        label=LOCALES["ai_enhance"][language]["consent_label"]
+                    ),
+                    ai_mode: gr.update(
+                        label=LOCALES["ai_enhance"][language]["mode_label"],
+                        choices=LOCALES["ai_enhance"][language]["mode_choices"],
+                        value=LOCALES["ai_enhance"][language]["mode_choices"][0],
+                    ),
+                    ai_template_name: gr.update(
+                        label=LOCALES["ai_enhance"][language]["template_label"],
+                        choices=LOCALES["ai_enhance"][language]["template_choices"],
+                        value=LOCALES["ai_enhance"][language]["template_choices"][0],
+                        visible=False,
+                    ),
+                    ai_preview_accordion: gr.update(
+                        label=LOCALES["ai_enhance"][language]["preview_label"]
+                    ),
+                    ai_status_text: gr.update(
+                        label=LOCALES["ai_enhance"][language]["status_label"],
+                        value=LOCALES["ai_enhance"][language]["initial_status"],
+                        visible=True,
+                    ),
+                    ai_input_preview_image: gr.update(
+                        label=LOCALES["ai_enhance"][language]["input_preview_label"]
+                    ),
+                    ai_output_preview_image: gr.update(
+                        label=LOCALES["ai_enhance"][language]["output_preview_label"]
+                    ),
                 }
 
             def change_visibility(option, lang, locales_key, custom_component):
@@ -627,6 +703,35 @@ def create_ui(
                         size_list_row: gr.update(visible=True),
                         plugin_options: gr.update(interactive=True),
                     }
+
+            def change_ai_mode(ai_mode_value, lang):
+                ai_locale = LOCALES["ai_enhance"][lang]
+                if ai_mode_value == "background_template":
+                    return {
+                        ai_template_name: gr.update(
+                            visible=True,
+                            label=ai_locale["background_template_label"],
+                            choices=ai_locale["template_choices"],
+                            value=ai_locale["template_choices"][0],
+                        )
+                    }
+                if ai_mode_value == "outfit":
+                    return {
+                        ai_template_name: gr.update(
+                            visible=True,
+                            label=ai_locale["outfit_template_label"],
+                            choices=ai_locale["outfit_template_choices"],
+                            value=ai_locale["outfit_template_choices"][0],
+                        )
+                    }
+                return {
+                    ai_template_name: gr.update(
+                        visible=False,
+                        label=ai_locale["template_label"],
+                        choices=ai_locale["template_choices"],
+                        value=ai_locale["template_choices"][0],
+                    )
+                }
 
             def change_image_kb(image_kb_option, lang):
                 return change_visibility(
@@ -689,6 +794,15 @@ def create_ui(
                     template_image_accordion,
                     print_parameter_tab,
                     print_options,
+                    ai_enhance_accordion,
+                    enable_ai_enhance,
+                    ai_consent,
+                    ai_mode,
+                    ai_template_name,
+                    ai_preview_accordion,
+                    ai_status_text,
+                    ai_input_preview_image,
+                    ai_output_preview_image,
                 ],
             )
 
@@ -710,6 +824,13 @@ def create_ui(
                 change_color,
                 inputs=[color_options, language_options],
                 outputs=[custom_color_rgb, custom_color_hex],
+            )
+
+            # AI 模式
+            ai_mode.input(
+                change_ai_mode,
+                inputs=[ai_mode, language_options],
+                outputs=[ai_template_name],
             )
 
             # 图片kb
@@ -765,6 +886,10 @@ def create_ui(
                     saturation_option,
                     plugin_options,
                     print_options,
+                    enable_ai_enhance,
+                    ai_consent,
+                    ai_mode,
+                    ai_template_name,
                 ],
                 outputs=[
                     img_output_standard,
@@ -775,6 +900,9 @@ def create_ui(
                     img_output_template,
                     template_image_accordion,
                     notification,
+                    ai_input_preview_image,
+                    ai_output_preview_image,
+                    ai_status_text,
                 ],
             )
 

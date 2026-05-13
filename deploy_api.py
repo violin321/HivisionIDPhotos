@@ -6,6 +6,8 @@ from hivision.creator.layout_calculator import (
     generate_layout_image,
 )
 from hivision.creator.choose_handler import choose_handler
+from hivision.plugin.ai_enhance import AIEnhanceRequest, AIEnhanceService
+from hivision.plugin.ai_enhance.errors import AIEnhanceValidationError
 from hivision.utils import (
     add_background,
     resize_image_to_kb,
@@ -27,6 +29,7 @@ MultiPartParser.max_file_size = 20 * 1024 * 1024   # 20MB
 
 app = FastAPI()
 creator = IDCreator()
+ai_enhance_service = AIEnhanceService()
 
 # 添加 CORS 中间件 解决跨域问题
 app.add_middleware(
@@ -144,6 +147,56 @@ async def human_matting_inference(
             "image_base64": bytes_2_base64(result_image_standard_bytes),
         }
     return result_message
+
+
+# AI 图像增强接口（独立于 /idphoto 主链路）
+@app.post("/ai_enhance")
+async def ai_enhance(
+    input_image_base64: str = Form(...),
+    mode: str = Form(...),
+    provider: str = Form("gpt-image-2"),
+    consent: bool = Form(False),
+    prompt: str = Form(None),
+    template_name: str = Form(None),
+    return_base64: bool = Form(True),
+    client_id: str = Form(None),
+):
+    try:
+        request = AIEnhanceRequest(
+            input_image_base64=input_image_base64,
+            mode=mode,
+            provider=provider,
+            consent=consent,
+            prompt=prompt,
+            template_name=template_name,
+            return_base64=return_base64,
+            client_id=client_id,
+        )
+        return ai_enhance_service.enhance(request).to_dict()
+    except AIEnhanceValidationError as exc:
+        return {
+            "status": False,
+            "image_base64": None,
+            "metadata": {
+                "fallback_used": True,
+                "fallback_reason": "validation_error",
+                "error_code": exc.error_code,
+                "latency_ms": 0,
+                "provider": provider,
+                "mode": mode,
+                "ai_generated": False,
+                "validation_passed": False,
+                "validation_warnings": [],
+                "debug_input_path": None,
+                "debug_output_path": None,
+                "debug_metadata_path": None,
+                "request_id": None,
+                "estimated_cost": None,
+                "rate_limited": False,
+                "usage_logged": False,
+            },
+            "message": exc.message,
+        }
 
 
 # 透明图像添加纯色背景接口
