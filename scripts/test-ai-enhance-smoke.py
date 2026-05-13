@@ -56,10 +56,8 @@ class FakeGoodProvider:
         return True
 
     def enhance(self, request: AIEnhanceRequest) -> AIEnhanceOutput:
-        image = np.zeros((512, 512, 3), dtype=np.uint8)
-        image[:, :, 0] = 180
-        image[:, :, 1] = 175
-        image[:, :, 2] = 170
+        image = make_input_numpy()
+        image[:, :, 1] = np.clip(image[:, :, 1].astype(np.int16) + 2, 0, 255).astype(np.uint8)
         return AIEnhanceOutput(
             status=True,
             image_base64=numpy_2_base64(image),
@@ -87,10 +85,7 @@ class FakeSlowProvider:
 
     def enhance(self, request: AIEnhanceRequest) -> AIEnhanceOutput:
         time.sleep(self.sleep_seconds)
-        image = np.zeros((512, 512, 3), dtype=np.uint8)
-        image[:, :, 0] = 180
-        image[:, :, 1] = 175
-        image[:, :, 2] = 170
+        image = make_input_numpy()
         return AIEnhanceOutput(
             status=True,
             image_base64=numpy_2_base64(image),
@@ -107,12 +102,16 @@ class FakeSlowProvider:
         )
 
 
-def make_input_base64() -> str:
+def make_input_numpy() -> np.ndarray:
     image = np.zeros((400, 300, 3), dtype=np.uint8)
-    image[:, :, 0] = 120
-    image[:, :, 1] = 130
-    image[:, :, 2] = 140
-    return numpy_2_base64(image)
+    image[:, :] = (180, 185, 190)
+    image[:220, 85:215] = (105, 145, 190)
+    image[220:, 45:255] = (50, 55, 65)
+    return image
+
+
+def make_input_base64() -> str:
+    return numpy_2_base64(make_input_numpy())
 
 
 def make_request(**kwargs) -> AIEnhanceRequest:
@@ -368,6 +367,24 @@ def test_metadata_fields_exist() -> None:
     os.unlink(usage_file.name)
 
 
+def test_identity_guard_metadata_and_usage_log() -> None:
+    usage_file = tempfile.NamedTemporaryFile(prefix="ai-usage-", suffix=".jsonl", delete=False)
+    usage_file.close()
+    service = AIEnhanceService(
+        provider_map={"gpt-image-2": FakeGoodProvider()},
+        usage_logger=TempUsageLogger(usage_file.name),
+    )
+    output = service.enhance(make_request(mode="repair", client_id="identity-meta-client"))
+    assert_true(output.status is True, "identity-guarded repair should pass")
+    assert_true(output.metadata.identity_guard_passed is True, "identity guard should pass")
+    assert_true(output.metadata.face_protected is True, "repair should mark face protection")
+    assert_true("protected_mean_delta" in output.metadata.identity_guard_metrics, "guard metrics missing")
+    payload = json.loads(Path(usage_file.name).read_text(encoding="utf-8").strip().splitlines()[-1])
+    assert_true(payload["identity_guard_passed"] is True, "usage log should include guard result")
+    assert_true("identity_guard_metrics" in payload, "usage log should include guard metrics")
+    os.unlink(usage_file.name)
+
+
 def main() -> None:
     test_consent_false()
     test_outfit_schema_and_consent_fallback_template()
@@ -380,6 +397,7 @@ def main() -> None:
     test_usage_log_and_no_base64()
     test_outfit_template_usage_log_and_prompt()
     test_metadata_fields_exist()
+    test_identity_guard_metadata_and_usage_log()
     print("AI enhance smoke tests passed")
 
 

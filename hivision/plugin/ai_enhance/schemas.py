@@ -67,6 +67,8 @@ class AIEnhanceMetadata:
     face_protected: bool = False
     color_guard_passed: Optional[bool] = None
     protected_region_delta: Optional[float] = None
+    identity_guard_passed: Optional[bool] = None
+    identity_guard_metrics: Dict[str, Any] = field(default_factory=dict)
     edit_region: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:

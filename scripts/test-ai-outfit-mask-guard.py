@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import numpy as np
 
 from hivision.plugin.ai_enhance import AIEnhanceOutput, AIEnhanceRequest, AIEnhanceService
+from hivision.plugin.ai_enhance.identity_guard import validate_identity_structure_guard
 from hivision.plugin.ai_enhance.outfit_protection import (
     _build_soft_composite_alpha,
     build_outfit_edit_plan,
@@ -239,6 +240,25 @@ def test_outfit_protected_region_change_still_fallbacks() -> None:
     assert_true(check.passed is False, "protected region color shift must remain a fallback condition")
 
 
+def test_identity_guard_blocks_face_and_background_spill() -> None:
+    source = make_portrait_base64()
+    changed_face = base64_2_numpy(source)
+    assert changed_face is not None
+    changed_face[:210, 90:210] = (210, 220, 240)
+    face_check = validate_identity_structure_guard(source, numpy_2_base64(changed_face), "repair")
+    assert_true(face_check.passed is False, "identity guard should block face/upper protected changes")
+    assert_true(face_check.error_code in {"IDENTITY_PROTECTED_REGION_CHANGED", "IDENTITY_STRUCTURE_CHANGED", "IDENTITY_FACE_COLOR_SHIFT"}, f"unexpected identity error: {face_check.error_code}")
+    assert_true("protected_mean_delta" in face_check.metrics, "identity metrics should include protected delta")
+
+    plan = build_outfit_edit_plan(source)
+    spill = base64_2_numpy(source)
+    assert spill is not None
+    spill[:, :28] = (20, 20, 230)
+    spill_check = validate_identity_structure_guard(source, numpy_2_base64(spill), "outfit", plan.edit_region)
+    assert_true(spill_check.passed is False, "identity guard should block outfit background spill")
+    assert_true(spill_check.error_code in {"BACKGROUND_SPILL_DETECTED", "AI_OUTPUT_MODIFIED_TOO_MUCH", "IDENTITY_PROTECTED_REGION_CHANGED"}, f"unexpected spill error: {spill_check.error_code}")
+
+
 def main() -> None:
     test_outfit_edit_plan_builds_crop_sized_mask()
     test_outfit_mask_covers_complete_jacket_edges_and_soft_alpha()
@@ -249,6 +269,7 @@ def main() -> None:
     test_outfit_nested_photo_guard_blocks_embedded_card()
     test_masked_composite_preserves_crop_background_and_edges()
     test_outfit_protected_region_change_still_fallbacks()
+    test_identity_guard_blocks_face_and_background_spill()
     print("AI outfit mask/crop guard tests passed")
 
 

@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "description": "Local AI enhance regression samples. Keep privacy-sensitive originals out of git; entries may point to local paths and are skipped when absent.",
+  "samples": [
+    {
+      "id": "demo_test0",
+      "path": "demo/images/test0.jpg",
+      "kind": "repo_demo",
+      "modes": ["repair", "background_template", "outfit"]
+    },
+    {
+      "id": "demo_test1",
+      "path": "demo/images/test1.jpg",
+      "kind": "repo_demo",
+      "modes": ["repair", "background_template", "outfit"]
+    },
+    {
+      "id": "inbound_sample_01_local",
+      "path": "/tmp/hivision-inbound-samples/sample_01.jpg",
+      "kind": "local_private_inbound",
+      "modes": ["repair", "background_template", "outfit"],
+      "skip_if_missing": true
+    },
+    {
+      "id": "inbound_sample_02_local",
+      "path": "/tmp/hivision-inbound-samples/sample_02.jpg",
+      "kind": "local_private_inbound",
+      "modes": ["repair", "background_template", "outfit"],
+      "skip_if_missing": true
+    },
+    {
+      "id": "inbound_sample_03_local",
+      "path": "/tmp/hivision-inbound-samples/sample_03.jpg",
+      "kind": "local_private_inbound",
+      "modes": ["repair", "background_template", "outfit"],
+      "skip_if_missing": true
+    }
+  ]
+}

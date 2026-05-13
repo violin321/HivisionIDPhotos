@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Optional
 
 from .errors import AIEnhanceConfigError, AIEnhanceConsentError, AIEnhanceProviderError
+from .identity_guard import validate_identity_structure_guard
 from .outfit_protection import (
     build_outfit_edit_plan,
     check_nested_photo_artifact,
@@ -87,6 +88,8 @@ class AIEnhanceService:
             face_protected = False
             protected_region_delta = None
             color_guard_passed = None
+            identity_guard_passed = None
+            identity_guard_metrics = {}
             if request.mode == "outfit":
                 try:
                     outfit_plan = build_outfit_edit_plan(request.input_image_base64)
@@ -204,6 +207,18 @@ class AIEnhanceService:
                     )
 
             validation = validate_ai_enhance_image(output.image_base64 or "")
+            identity_guard = validate_identity_structure_guard(
+                request.input_image_base64,
+                output.image_base64 or "",
+                request.mode,
+                outfit_plan.edit_region if outfit_plan else request.edit_region,
+            )
+            identity_guard_passed = identity_guard.passed
+            identity_guard_metrics = identity_guard.metrics
+            identity_warnings = [f"identity_guard:{warning}" for warning in identity_guard.warnings]
+            validation.warnings.extend(identity_warnings)
+            for metric_key, metric_value in sorted(identity_guard_metrics.items()):
+                validation.warnings.append(f"identity_guard_metric:{metric_key}={metric_value}")
             if outfit_plan and color_guard_passed and protected_region_delta is not None:
                 color_guard_warning = f"protected_region_delta:{protected_region_delta:.2f}"
                 if color_guard_warning not in validation.warnings:
@@ -237,7 +252,34 @@ class AIEnhanceService:
                     face_protected=face_protected,
                     color_guard_passed=color_guard_passed,
                     protected_region_delta=protected_region_delta,
-                    edit_region=outfit_plan.edit_region if outfit_plan else None,
+                    identity_guard_passed=identity_guard_passed,
+                    identity_guard_metrics=identity_guard_metrics,
+                    edit_region=outfit_plan.edit_region if outfit_plan else request.edit_region,
+                )
+
+            if not identity_guard.passed:
+                return self._fallback_output(
+                    request=request,
+                    message=(
+                        "AI enhancement fallback used because identity/structure guard failed: "
+                        f"{identity_guard.message or identity_guard.error_code}"
+                    ),
+                    fallback_reason="validation_failed",
+                    error_code=identity_guard.error_code or "IDENTITY_GUARD_FAILED",
+                    started_at=started_at,
+                    debug_paths=debug_paths,
+                    validation_warnings=validation.warnings,
+                    validation_passed=False,
+                    request_id=request_id,
+                    estimated_cost=estimated_cost,
+                    mask_edit=mask_edit,
+                    crop_edit=crop_edit,
+                    face_protected=face_protected or request.mode in {"repair", "background_template"},
+                    color_guard_passed=color_guard_passed,
+                    protected_region_delta=protected_region_delta,
+                    identity_guard_passed=False,
+                    identity_guard_metrics=identity_guard_metrics,
+                    edit_region=outfit_plan.edit_region if outfit_plan else request.edit_region,
                 )
 
             output.metadata = AIEnhanceMetadata(
@@ -260,10 +302,12 @@ class AIEnhanceService:
                 template_name=request.template_name if request.mode in {"background_template", "outfit"} else None,
                 mask_edit=mask_edit,
                 crop_edit=crop_edit,
-                face_protected=face_protected,
+                face_protected=face_protected or request.mode in {"repair", "background_template"},
                 color_guard_passed=color_guard_passed,
                 protected_region_delta=protected_region_delta,
-                edit_region=outfit_plan.edit_region if outfit_plan else None,
+                identity_guard_passed=identity_guard_passed,
+                identity_guard_metrics=identity_guard_metrics,
+                edit_region=outfit_plan.edit_region if outfit_plan else request.edit_region,
             )
             self._save_debug_metadata(debug_paths.get("metadata"), request, output)
             output.metadata.usage_logged = self._log_usage(output)
@@ -289,6 +333,8 @@ class AIEnhanceService:
         face_protected: bool = False,
         color_guard_passed: Optional[bool] = None,
         protected_region_delta: Optional[float] = None,
+        identity_guard_passed: Optional[bool] = None,
+        identity_guard_metrics: Optional[dict] = None,
         edit_region: Optional[dict] = None,
     ) -> AIEnhanceOutput:
         output = AIEnhanceOutput(
@@ -317,6 +363,8 @@ class AIEnhanceService:
                 face_protected=face_protected,
                 color_guard_passed=color_guard_passed,
                 protected_region_delta=protected_region_delta,
+                identity_guard_passed=identity_guard_passed,
+                identity_guard_metrics=identity_guard_metrics or {},
                 edit_region=edit_region,
             ),
             message=message,
@@ -345,6 +393,8 @@ class AIEnhanceService:
                 "face_protected": metadata.face_protected,
                 "color_guard_passed": metadata.color_guard_passed,
                 "protected_region_delta": metadata.protected_region_delta,
+                "identity_guard_passed": metadata.identity_guard_passed,
+                "identity_guard_metrics": metadata.identity_guard_metrics,
             }
         )
 
