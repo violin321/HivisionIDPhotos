@@ -77,6 +77,7 @@ export interface IdPhotoTemplate {
 export interface StudioConfig {
   consent: { required: boolean; title: string; body: string };
   privacy: { retentionHours: number; deletionCopy: string };
+  uploadLimits?: { maxBytes: number; maxPixels: number; allowedMimeTypes: string[]; allowedExtensions: string[] };
   aiDisclaimer: string;
   copy: { productName: string; uploadCta: string };
   features: { officialIdPhoto: boolean; aiEnhancePreview: boolean; wechatMiniappReady: boolean };
@@ -125,8 +126,14 @@ export const config: StudioConfig = {
       : 'Your portrait is uploaded to the Phase 2.5 API adapter and receives expiring file handles.',
   },
   privacy: {
-    retentionHours: 24,
+    retentionHours: 6,
     deletionCopy: 'Uploads and generated files expire automatically.',
+  },
+  uploadLimits: {
+    maxBytes: 20 * 1024 * 1024,
+    maxPixels: 24_000_000,
+    allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp'],
+    allowedExtensions: ['.jpg', '.jpeg', '.png', '.webp'],
   },
   aiDisclaimer: 'AI enhance is optional and visually separated from official ID photo output.',
   copy: { productName: 'HivisionIDPhotos Studio', uploadCta: 'Select portrait' },
@@ -219,8 +226,12 @@ export async function getTask(task: ProcessingTask, tick = 0): Promise<Processin
 }
 
 export async function getConfig() {
-  await wait(80);
-  return config;
+  if (useMockApi) {
+    await wait(80);
+    return config;
+  }
+
+  return requestJson<StudioConfig>('/api/config');
 }
 
 export async function getTemplates() {

@@ -56,6 +56,8 @@
 
 Phase 4 adds a deployable Web v2 + FastAPI task workflow without replacing the existing Gradio site. See `docs/phase4-deploy.md` for production notes targeting `https://idphoto-ai.violinai.qzz.io`.
 
+Phase 5A hardens the public workflow with application-level upload validation, runtime TTL cleanup, and Basic Auth capable e2e checks. See `docs/phase5A-hardening.md`.
+
 Quick local API contract check:
 
 ```bash

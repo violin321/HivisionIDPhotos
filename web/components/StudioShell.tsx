@@ -193,6 +193,10 @@ export default function StudioShell() {
           <aside className="border-t border-ink/10 bg-[#e8e0d1]/60 p-7 md:p-11 lg:border-l lg:border-t-0 lg:p-12">
             <TaskStatusRail upload={upload} task={task} errorMessage={errorMessage} />
 
+            <div className="mt-5 rounded-2xl border border-ink/10 bg-porcelain/70 p-4 text-xs leading-5 text-slate">
+              Privacy note: uploads accept JPG/PNG/WebP only, are size-limited, and expire automatically with generated results.
+            </div>
+
             <div className="mt-5">
               <ResultPanel task={task} template={template} selectedBackground={selectedBackground} sourcePreviewUrl={previewUrl} />
             </div>

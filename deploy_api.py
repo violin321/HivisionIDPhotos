@@ -1,5 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
 import json
+import os
 from fastapi import FastAPI, UploadFile, Form, File, HTTPException, BackgroundTasks
 import logging
 import shutil
@@ -8,6 +9,8 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
+
+from PIL import Image, UnidentifiedImageError
 
 from hivision import IDCreator
 from hivision.error import FaceError
@@ -34,10 +37,23 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.staticfiles import StaticFiles
 from starlette.formparsers import MultiPartParser
 
-# 设置Starlette表单字段大小限制
-MultiPartParser.max_part_size = 10 * 1024 * 1024  # 10MB
-# 设置Starlette文件上传大小限制
-MultiPartParser.max_file_size = 20 * 1024 * 1024   # 20MB
+# 设置Starlette表单字段大小限制。应用层仍会做二次校验，避免网关配置变化时失守。
+MAX_UPLOAD_BYTES = int(os.environ.get("IDPHOTO_MAX_UPLOAD_BYTES", str(20 * 1024 * 1024)))
+MAX_IMAGE_PIXELS = int(os.environ.get("IDPHOTO_MAX_IMAGE_PIXELS", str(24_000_000)))
+RUNTIME_TTL_SECONDS = int(os.environ.get("IDPHOTO_RUNTIME_TTL_SECONDS", str(6 * 60 * 60)))
+ALLOWED_UPLOAD_TYPES: dict[str, set[str]] = {
+    "image/jpeg": {".jpg", ".jpeg"},
+    "image/png": {".png"},
+    "image/webp": {".webp"},
+}
+ALLOWED_MAGIC_BYTES: dict[str, tuple[bytes, ...]] = {
+    "image/jpeg": (b"\xff\xd8\xff",),
+    "image/png": (b"\x89PNG\r\n\x1a\n",),
+    "image/webp": (b"RIFF",),
+}
+
+MultiPartParser.max_part_size = min(MAX_UPLOAD_BYTES, 20 * 1024 * 1024)
+MultiPartParser.max_file_size = MAX_UPLOAD_BYTES
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +79,14 @@ def utc_expires_at(minutes: int) -> str:
     return (datetime.now(timezone.utc) + timedelta(minutes=minutes)).isoformat()
 
 
+def utc_expires_at_seconds(seconds: int) -> str:
+    return (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat()
+
+
+def ttl_hours() -> float:
+    return round(RUNTIME_TTL_SECONDS / 3600, 2)
+
+
 def public_runtime_url(kind: Literal["uploads", "results"], filename: str) -> str:
     return f"/runtime/{kind}/{filename}"
 
@@ -76,13 +100,52 @@ def error_detail(code: str, message: str, retryable: bool = True, trace_id: str 
 
 def safe_suffix(filename: str | None, content_type: str | None) -> str:
     suffix = Path(filename or "").suffix.lower()
-    if suffix in {".jpg", ".jpeg", ".png", ".webp"}:
+    if content_type in ALLOWED_UPLOAD_TYPES and suffix in ALLOWED_UPLOAD_TYPES[content_type]:
         return suffix
     if content_type == "image/png":
         return ".png"
     if content_type == "image/webp":
         return ".webp"
     return ".jpg"
+
+
+def upload_error(status_code: int, code: str, message: str) -> HTTPException:
+    return HTTPException(status_code=status_code, detail=error_detail(code, message, retryable=True))
+
+
+def sniff_magic(content: bytes, content_type: str) -> bool:
+    if content_type == "image/webp":
+        return len(content) >= 12 and content.startswith(b"RIFF") and content[8:12] == b"WEBP"
+    return any(content.startswith(prefix) for prefix in ALLOWED_MAGIC_BYTES.get(content_type, ()))
+
+
+def validate_upload_metadata(filename: str | None, content_type: str | None) -> str:
+    normalized_type = (content_type or "").split(";", 1)[0].strip().lower()
+    if normalized_type not in ALLOWED_UPLOAD_TYPES:
+        raise upload_error(400, "INVALID_FILE_TYPE", "Only JPG, PNG, or WebP image uploads are supported.")
+    suffix = Path(filename or "").suffix.lower()
+    if not suffix or suffix not in ALLOWED_UPLOAD_TYPES[normalized_type]:
+        allowed = ", ".join(sorted({ext for exts in ALLOWED_UPLOAD_TYPES.values() for ext in exts}))
+        raise upload_error(400, "INVALID_FILE_EXTENSION", f"Unsupported file extension. Allowed extensions: {allowed}.")
+    return normalized_type
+
+
+def validate_upload_bytes(content: bytes, content_type: str) -> None:
+    if not content:
+        raise upload_error(400, "EMPTY_UPLOAD", "Uploaded file is empty.")
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise upload_error(413, "FILE_TOO_LARGE", f"Uploaded file exceeds the {MAX_UPLOAD_BYTES // (1024 * 1024)}MB limit.")
+    if not sniff_magic(content, content_type):
+        raise upload_error(400, "INVALID_IMAGE_BYTES", "Uploaded file content does not match the declared image type.")
+    try:
+        import io
+        with Image.open(io.BytesIO(content)) as image:
+            image.verify()
+            width, height = image.size
+    except (UnidentifiedImageError, OSError, ValueError) as exc:
+        raise upload_error(400, "INVALID_IMAGE_BYTES", "Uploaded file could not be decoded as a valid image.") from exc
+    if width <= 0 or height <= 0 or width * height > MAX_IMAGE_PIXELS:
+        raise upload_error(413, "IMAGE_TOO_LARGE", f"Image dimensions exceed the {MAX_IMAGE_PIXELS} pixel limit.")
 
 
 DEFAULT_TEMPLATE_ID = "cn-id-1inch"
@@ -155,8 +218,64 @@ def build_result_file(task_id: str, lane: Literal["official", "ai"], filename: s
         "fileId": f"file_result_{lane}_{task_id[-6:]}",
         "previewUrl": url,
         "downloadUrl": url,
-        "expiresAt": utc_expires_at(90),
+        "expiresAt": utc_expires_at_seconds(RUNTIME_TTL_SECONDS),
     }
+
+
+def remove_path(path: Path) -> None:
+    if not path.exists():
+        return
+    if path.is_dir():
+        shutil.rmtree(path)
+    else:
+        path.unlink()
+
+
+def cleanup_runtime(now: float | None = None) -> dict[str, int]:
+    now = time.time() if now is None else now
+    cutoff = now - RUNTIME_TTL_SECONDS
+    removed_uploads = 0
+    removed_results = 0
+    expired_tasks = 0
+
+    active_upload_ids = {task.get("uploadId") for task in TASKS.values() if task.get("status") in {"queued", "processing"}}
+    active_task_ids = {task_id for task_id, task in TASKS.items() if task.get("status") in {"queued", "processing"}}
+
+    for upload_id, upload in list(UPLOADS.items()):
+        if upload_id in active_upload_ids:
+            continue
+        if float(upload.get("createdAt", 0)) < cutoff:
+            remove_path(Path(upload.get("path", "")))
+            UPLOADS.pop(upload_id, None)
+            removed_uploads += 1
+
+    for upload_file in UPLOAD_DIR.iterdir():
+        if upload_file.is_file() and upload_file.stat().st_mtime < cutoff:
+            if not any(Path(upload.get("path", "")) == upload_file for upload in UPLOADS.values()):
+                remove_path(upload_file)
+                removed_uploads += 1
+
+    for task_id, task in list(TASKS.items()):
+        if task.get("status") in {"queued", "processing"}:
+            continue
+        if float(task.get("createdAt", 0)) < cutoff:
+            remove_path(RESULT_DIR / task_id)
+            TASKS.pop(task_id, None)
+            expired_tasks += 1
+            removed_results += 1
+
+    for result_dir in RESULT_DIR.iterdir():
+        if result_dir.name in active_task_ids:
+            continue
+        if result_dir.stat().st_mtime < cutoff and result_dir.name not in TASKS:
+            remove_path(result_dir)
+            removed_results += 1
+
+    if removed_uploads or removed_results or expired_tasks:
+        if "TASKS_FILE" in globals():
+            persist_tasks()
+        logger.info("[API] runtime cleanup removed uploads=%s results=%s tasks=%s", removed_uploads, removed_results, expired_tasks)
+    return {"uploads": removed_uploads, "results": removed_results, "tasks": expired_tasks}
 
 
 def persist_tasks() -> None:
@@ -370,6 +489,7 @@ class ProcessingTask(BaseModel):
 UPLOADS: dict[str, dict[str, Any]] = {}
 TASKS: dict[str, dict[str, Any]] = {}
 load_tasks()
+cleanup_runtime()
 
 # 添加 CORS 中间件 解决跨域问题
 app.add_middleware(
@@ -414,8 +534,14 @@ async def api_config():
             "body": "Your uploaded image is processed only for the selected ID photo task.",
         },
         "privacy": {
-            "retentionHours": 24,
-            "deletionCopy": "Uploads and generated result files expire automatically.",
+            "retentionHours": ttl_hours(),
+            "deletionCopy": "Uploads and generated result files expire automatically after the configured TTL.",
+        },
+        "uploadLimits": {
+            "maxBytes": MAX_UPLOAD_BYTES,
+            "maxPixels": MAX_IMAGE_PIXELS,
+            "allowedMimeTypes": sorted(ALLOWED_UPLOAD_TYPES.keys()),
+            "allowedExtensions": sorted({ext for exts in ALLOWED_UPLOAD_TYPES.values() for ext in exts}),
         },
         "aiDisclaimer": "AI preview is optional, local-derived, and separate from official IDCreator output.",
         "copy": {"productName": "HivisionIDPhotos Studio", "uploadCta": "Select portrait"},
@@ -429,24 +555,25 @@ async def api_config():
 
 @app.post("/api/uploads")
 async def api_create_upload(file: UploadFile = File(...)):
-    if not file.content_type or not file.content_type.startswith("image/"):
-        raise HTTPException(status_code=400, detail=error_detail("INVALID_FILE_TYPE", "Only image uploads are supported.", retryable=True))
+    cleanup_runtime()
+    content_type = validate_upload_metadata(file.filename, file.content_type)
+    content = await file.read()
+    validate_upload_bytes(content, content_type)
 
     upload_id = f"upl_{uuid.uuid4().hex[:12]}"
     file_id = f"file_source_{uuid.uuid4().hex[:12]}"
-    stored_name = f"{upload_id}{safe_suffix(file.filename, file.content_type)}"
+    stored_name = f"{upload_id}{safe_suffix(file.filename, content_type)}"
     stored_path = UPLOAD_DIR / stored_name
 
-    with stored_path.open("wb") as output:
-        shutil.copyfileobj(file.file, output)
+    stored_path.write_bytes(content)
 
-    expires_at = utc_expires_at(24 * 60)
+    expires_at = utc_expires_at_seconds(RUNTIME_TTL_SECONDS)
     UPLOADS[upload_id] = {
         "uploadId": upload_id,
         "fileId": file_id,
         "filename": file.filename or stored_name,
         "storedName": stored_name,
-        "mimeType": file.content_type,
+        "mimeType": content_type,
         "path": str(stored_path),
         "url": public_runtime_url("uploads", stored_name),
         "expiresAt": expires_at,
@@ -457,7 +584,7 @@ async def api_create_upload(file: UploadFile = File(...)):
         "uploadId": upload_id,
         "fileId": file_id,
         "filename": file.filename or stored_name,
-        "mimeType": file.content_type,
+        "mimeType": content_type,
         "url": public_runtime_url("uploads", stored_name),
         "expiresAt": expires_at,
     }
@@ -465,6 +592,7 @@ async def api_create_upload(file: UploadFile = File(...)):
 
 @app.post("/api/tasks")
 async def api_create_task(payload: TaskCreateRequest, background_tasks: BackgroundTasks):
+    cleanup_runtime()
     if payload.uploadId not in UPLOADS:
         raise HTTPException(status_code=404, detail=error_detail("UPLOAD_NOT_FOUND", "Upload handle was not found or has expired.", retryable=True))
 
@@ -497,6 +625,7 @@ async def api_create_task(payload: TaskCreateRequest, background_tasks: Backgrou
 
 @app.get("/api/tasks/{task_id}")
 async def api_get_task(task_id: str):
+    cleanup_runtime()
     task = TASKS.get(task_id)
     if not task:
         raise HTTPException(status_code=404, detail=error_detail("TASK_NOT_FOUND", "Task was not found or has expired.", retryable=True))
