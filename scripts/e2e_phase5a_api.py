@@ -22,6 +22,10 @@ from pathlib import Path
 from urllib import error, request
 
 SENSITIVE_HEADER_NAMES = {"authorization"}
+DEFAULT_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (compatible; idphoto-ai-e2e/5A; +https://idphoto-ai.violinai.qzz.io)",
+    "Accept": "application/json, text/plain, */*",
+}
 
 
 def auth_header() -> dict[str, str]:
@@ -40,7 +44,7 @@ def redact_url(url: str) -> str:
 
 
 def http_json(method: str, url: str, data: bytes | None = None, headers: dict[str, str] | None = None, *, expect_status: set[int] | None = None) -> tuple[int, dict]:
-    all_headers = {**auth_header(), **(headers or {})}
+    all_headers = {**DEFAULT_HEADERS, **auth_header(), **(headers or {})}
     req = request.Request(url, data=data, headers=all_headers, method=method)
     try:
         with request.urlopen(req, timeout=120) as resp:
