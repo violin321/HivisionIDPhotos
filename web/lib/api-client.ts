@@ -1,5 +1,5 @@
 // Web v2 client aligned with api/contract.md.
-// It prefers the Phase 2.5 FastAPI adapter when NEXT_PUBLIC_API_BASE_URL is set,
+// It prefers the Phase 3 FastAPI adapter when NEXT_PUBLIC_API_BASE_URL is set,
 // and keeps a local mock fallback for backend-less previews.
 
 export type TaskStatus = 'queued' | 'processing' | 'succeeded' | 'failed' | 'expired';
@@ -34,6 +34,7 @@ export interface ProcessingTask {
     background: BackgroundColor;
     renderOfficialIdPhoto: boolean;
     renderAiEnhancePreview: boolean;
+    aiEnhancePreviewKind?: 'none' | 'local-derived-preview' | string;
   };
   officialResult?: ResultFile;
   aiEnhanceResult?: ResultFile;
@@ -137,6 +138,7 @@ async function mockCreateTask(input: TaskCreateInput): Promise<ProcessingTask> {
       background,
       renderOfficialIdPhoto: true,
       renderAiEnhancePreview,
+      aiEnhancePreviewKind: renderAiEnhancePreview ? 'local-derived-preview' : 'none',
     },
   };
 }

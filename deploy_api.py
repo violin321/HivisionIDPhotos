@@ -1,4 +1,6 @@
-from fastapi import FastAPI, UploadFile, Form, File, HTTPException
+from concurrent.futures import ThreadPoolExecutor
+import json
+from fastapi import FastAPI, UploadFile, Form, File, HTTPException, BackgroundTasks
 import logging
 import shutil
 import time
@@ -76,15 +78,170 @@ def safe_suffix(filename: str | None, content_type: str | None) -> str:
     return ".jpg"
 
 
-def copy_upload_to_result(upload_id: str, task_id: str, lane: Literal["official", "ai"]) -> str:
-    upload = UPLOADS.get(upload_id)
-    if not upload:
-        raise KeyError(upload_id)
-    source = Path(upload["path"])
-    filename = f"{task_id}_{lane}{source.suffix or '.jpg'}"
-    target = RESULT_DIR / filename
-    shutil.copyfile(source, target)
-    return filename
+TEMPLATE_SPECS: dict[str, dict[str, Any]] = {
+    "cn-id-1inch": {"height": 413, "width": 295, "head_measure_ratio": 0.2, "head_height_ratio": 0.45},
+    "cn-id-2inch": {"height": 579, "width": 413, "head_measure_ratio": 0.2, "head_height_ratio": 0.45},
+    "passport-visa": {"height": 567, "width": 390, "head_measure_ratio": 0.2, "head_height_ratio": 0.45},
+}
+
+BACKGROUND_BGR: dict[str, tuple[int, int, int]] = {
+    "white": (255, 255, 255),
+    "blue": (255, 120, 67),
+    "red": (49, 49, 209),
+    "gray": (238, 238, 238),
+}
+
+TASKS_FILE = RUNTIME_DIR / "tasks.json"
+executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="idcreator-task")
+
+
+def task_public_result(task_id: str, filename: str) -> str:
+    return public_runtime_url("results", f"{task_id}/{filename}")
+
+
+def build_result_file(task_id: str, lane: Literal["official", "ai"], filename: str) -> dict[str, str]:
+    url = task_public_result(task_id, filename)
+    return {
+        "fileId": f"file_result_{lane}_{task_id[-6:]}",
+        "previewUrl": url,
+        "downloadUrl": url,
+        "expiresAt": utc_expires_at(90),
+    }
+
+
+def persist_tasks() -> None:
+    serializable = {task_id: {key: value for key, value in task.items() if key != "future"} for task_id, task in TASKS.items()}
+    tmp = TASKS_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(serializable, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(TASKS_FILE)
+
+
+def load_tasks() -> None:
+    if not TASKS_FILE.exists():
+        return
+    try:
+        stored = json.loads(TASKS_FILE.read_text(encoding="utf-8"))
+        for task_id, task in stored.items():
+            if task.get("status") in {"queued", "processing"}:
+                task["status"] = "failed"
+                task["error"] = {
+                    "code": "TASK_INTERRUPTED",
+                    "message": "Task was interrupted before completion. Please create a new task.",
+                    "retryable": True,
+                }
+            TASKS[task_id] = task
+    except Exception:
+        logger.exception("[API] failed to load persisted tasks")
+
+
+def normalize_template_options(template_id: str, options: dict[str, Any]) -> dict[str, Any]:
+    spec = dict(TEMPLATE_SPECS.get(template_id, TEMPLATE_SPECS["cn-id-1inch"]))
+    user_spec = options.get("spec") if isinstance(options.get("spec"), dict) else {}
+    for source in (options, user_spec):
+        for key in ("height", "width", "dpi", "head_measure_ratio", "head_height_ratio", "top_distance_max", "top_distance_min"):
+            if key in source and source[key] is not None:
+                spec[key] = source[key]
+    spec["height"] = int(spec.get("height", 413))
+    spec["width"] = int(spec.get("width", 295))
+    spec["dpi"] = int(spec.get("dpi", 300))
+    spec["head_measure_ratio"] = float(spec.get("head_measure_ratio", 0.2))
+    spec["head_height_ratio"] = float(spec.get("head_height_ratio", 0.45))
+    spec["top_distance_max"] = float(spec.get("top_distance_max", 0.12))
+    spec["top_distance_min"] = float(spec.get("top_distance_min", 0.10))
+    return spec
+
+
+def read_upload_image(upload_path: str) -> np.ndarray:
+    image_bytes = Path(upload_path).read_bytes()
+    nparr = np.frombuffer(image_bytes, np.uint8)
+    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    if img is None:
+        raise ValueError("Uploaded image could not be decoded.")
+    return cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+
+def write_png(image: np.ndarray, output_path: Path, dpi: int) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    save_image_dpi_to_bytes(image.astype(np.uint8), str(output_path), dpi=dpi)
+
+
+def make_ai_preview_from_official(official_image: np.ndarray, output_path: Path, dpi: int) -> None:
+    # Local derived preview only: gentle brightness/contrast pass, no third-party AI call.
+    preview = cv2.convertScaleAbs(official_image, alpha=1.02, beta=4)
+    write_png(preview, output_path, dpi)
+
+
+def run_idcreator_task(task_id: str) -> None:
+    task = TASKS[task_id]
+    task["status"] = "processing"
+    persist_tasks()
+
+    try:
+        upload = UPLOADS.get(task["uploadId"])
+        if not upload:
+            raise FileNotFoundError("Upload handle was not found or has expired.")
+
+        spec = normalize_template_options(task["templateId"], task.get("options", {}))
+        background_key = str(task.get("options", {}).get("background", "white"))
+        background_bgr = BACKGROUND_BGR.get(background_key, BACKGROUND_BGR["white"])
+
+        choose_handler(
+            creator,
+            task.get("options", {}).get("humanMattingModel", "hivision_modnet"),
+            task.get("options", {}).get("faceDetectModel", "mtcnn"),
+        )
+        img = read_upload_image(upload["path"])
+        result = creator(
+            img,
+            size=(spec["height"], spec["width"]),
+            head_measure_ratio=spec["head_measure_ratio"],
+            head_height_ratio=spec["head_height_ratio"],
+            head_top_range=(spec["top_distance_max"], spec["top_distance_min"]),
+            face_alignment=bool(task.get("options", {}).get("faceAlign", False)),
+            whitening_strength=int(task.get("options", {}).get("whiteningStrength", 0)),
+            brightness_strength=float(task.get("options", {}).get("brightnessStrength", 0)),
+            contrast_strength=float(task.get("options", {}).get("contrastStrength", 0)),
+            sharpen_strength=float(task.get("options", {}).get("sharpenStrength", 0)),
+            saturation_strength=float(task.get("options", {}).get("saturationStrength", 0)),
+        )
+
+        official_rgb = add_background(result.standard, bgr=background_bgr, mode="pure_color").astype(np.uint8)
+        result_dir = RESULT_DIR / task_id
+        official_name = "official_idcreator.png"
+        write_png(official_rgb, result_dir / official_name, spec["dpi"])
+        task["officialResult"] = build_result_file(task_id, "official", official_name)
+
+        if task.get("options", {}).get("renderAiEnhancePreview"):
+            ai_name = "ai_enhance_preview_derived.png"
+            make_ai_preview_from_official(official_rgb, result_dir / ai_name, spec["dpi"])
+            task["aiEnhanceResult"] = build_result_file(task_id, "ai", ai_name)
+
+        task["status"] = "succeeded"
+        task.pop("error", None)
+    except FaceError as err:
+        logger.exception("[API] IDCreator task failed: task_id=%s face_num=%s", task_id, getattr(err, "face_num", None))
+        task["status"] = "failed"
+        task["error"] = {
+            "code": "FACE_DETECTION_FAILED",
+            "message": "IDCreator could not detect exactly one valid face in the uploaded image.",
+            "retryable": True,
+            "traceId": task_id,
+        }
+    except Exception as exc:
+        logger.exception("[API] IDCreator task failed: task_id=%s", task_id)
+        task["status"] = "failed"
+        task["error"] = {
+            "code": "IDCREATOR_TASK_FAILED",
+            "message": str(exc),
+            "retryable": True,
+            "traceId": task_id,
+        }
+    finally:
+        persist_tasks()
+
+
+def schedule_idcreator_task(background_tasks: BackgroundTasks, task_id: str) -> None:
+    background_tasks.add_task(lambda: executor.submit(run_idcreator_task, task_id))
 
 
 class ResultFile(BaseModel):
@@ -117,6 +274,7 @@ class ProcessingTask(BaseModel):
 
 UPLOADS: dict[str, dict[str, Any]] = {}
 TASKS: dict[str, dict[str, Any]] = {}
+load_tasks()
 
 # 添加 CORS 中间件 解决跨域问题
 app.add_middleware(
@@ -132,7 +290,7 @@ app.add_middleware(
 
 @app.get("/api/health")
 async def api_health():
-    return {"status": "ok", "service": "hivisionidphotos-api", "phase": "2.5"}
+    return {"status": "ok", "service": "hivisionidphotos-api", "phase": "3"}
 
 
 @app.post("/api/uploads")
@@ -172,13 +330,20 @@ async def api_create_upload(file: UploadFile = File(...)):
 
 
 @app.post("/api/tasks")
-async def api_create_task(payload: TaskCreateRequest):
+async def api_create_task(payload: TaskCreateRequest, background_tasks: BackgroundTasks):
     if payload.uploadId not in UPLOADS:
         raise HTTPException(status_code=404, detail={"error": {"code": "UPLOAD_NOT_FOUND", "message": "Upload handle was not found or has expired.", "retryable": True}})
 
     task_id = f"task_{uuid.uuid4().hex[:12]}"
     background = payload.options.get("background", "white")
     render_ai = bool(payload.options.get("renderAiEnhancePreview", False)) or payload.aiMode in {"preview", "enhance"}
+    task_options = dict(payload.options)
+    task_options.update({
+        "background": background,
+        "renderOfficialIdPhoto": True,
+        "renderAiEnhancePreview": render_ai,
+        "aiEnhancePreviewKind": "local-derived-preview" if render_ai else "none",
+    })
     task = {
         "taskId": task_id,
         "status": "queued",
@@ -186,15 +351,13 @@ async def api_create_task(payload: TaskCreateRequest):
         "templateId": payload.templateId,
         "platform": payload.platform,
         "aiMode": payload.aiMode,
-        "options": {
-            "background": background,
-            "renderOfficialIdPhoto": True,
-            "renderAiEnhancePreview": render_ai,
-        },
+        "options": task_options,
         "createdAt": time.time(),
     }
     TASKS[task_id] = task
-    return ProcessingTask(**task)
+    persist_tasks()
+    schedule_idcreator_task(background_tasks, task_id)
+    return ProcessingTask(**{key: value for key, value in task.items() if key != "createdAt"})
 
 
 @app.get("/api/tasks/{task_id}")
@@ -203,31 +366,7 @@ async def api_get_task(task_id: str):
     if not task:
         raise HTTPException(status_code=404, detail={"error": {"code": "TASK_NOT_FOUND", "message": "Task was not found or has expired.", "retryable": True}})
 
-    elapsed = time.time() - task["createdAt"]
-    if elapsed < 0.8:
-        task["status"] = "queued"
-    elif elapsed < 1.6:
-        task["status"] = "processing"
-    else:
-        task["status"] = "succeeded"
-        if "officialResult" not in task:
-            official_name = copy_upload_to_result(task["uploadId"], task_id, "official")
-            task["officialResult"] = {
-                "fileId": f"file_result_official_{task_id[-6:]}",
-                "previewUrl": public_runtime_url("results", official_name),
-                "downloadUrl": public_runtime_url("results", official_name),
-                "expiresAt": utc_expires_at(90),
-            }
-        if task["options"].get("renderAiEnhancePreview") and "aiEnhanceResult" not in task:
-            ai_name = copy_upload_to_result(task["uploadId"], task_id, "ai")
-            task["aiEnhanceResult"] = {
-                "fileId": f"file_result_ai_{task_id[-6:]}",
-                "previewUrl": public_runtime_url("results", ai_name),
-                "downloadUrl": public_runtime_url("results", ai_name),
-                "expiresAt": utc_expires_at(90),
-            }
-
-    return ProcessingTask(**{key: value for key, value in task.items() if key != "createdAt"})
+    return ProcessingTask(**{key: value for key, value in task.items() if key not in {"createdAt", "future"}})
 
 
 # 证件照智能制作接口

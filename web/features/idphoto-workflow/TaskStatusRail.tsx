@@ -37,7 +37,7 @@ export function TaskStatusRail({ upload, task }: TaskStatusRailProps) {
                 <p className="text-sm font-semibold">{labels[status]}</p>
                 <p className="mt-1 text-xs leading-5 text-slate">
                   {status === 'queued' && 'Task accepted; safe to poll rather than blocking request.'}
-                  {status === 'processing' && 'Official crop, background, and compliance render are simulated.'}
+                  {status === 'processing' && 'Official crop, background, and compliance render run through the IDCreator API adapter.'}
                   {status === 'succeeded' && 'Result handles include fileId, previewUrl, downloadUrl, expiresAt.'}
                   {status === 'failed' && 'Contract reserves retryable error shape for server validation failures.'}
                   {status === 'expired' && 'Expiring handles keep web and miniapp behavior aligned.'}
