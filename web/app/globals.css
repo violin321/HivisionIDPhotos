@@ -7,10 +7,32 @@
   --font-body: 'Aptos', 'Segoe UI', sans-serif;
   --font-mono: 'IBM Plex Mono', 'SFMono-Regular', monospace;
   --ink: #121417;
+  --graphite: #252a2f;
+  --slate: #69737d;
   --paper: #f4f0e8;
   --porcelain: #fbfaf7;
   --line: #d8d1c4;
   --measurement: #1f6f78;
+  --amber: #c57b28;
+  --grid-strong: rgba(18,20,23,.045);
+  --grid-soft: rgba(18,20,23,.035);
+  --warm-glow: rgba(197,123,40,.16);
+  --panel-shadow: rgba(18, 20, 23, .16);
+}
+
+:root[data-theme='dark'] {
+  --ink: #f5f1e8;
+  --graphite: #d6d0c4;
+  --slate: #a8b0b8;
+  --paper: #101417;
+  --porcelain: #171d21;
+  --line: #384149;
+  --measurement: #5fb3bf;
+  --amber: #e0a24f;
+  --grid-strong: rgba(245,241,232,.055);
+  --grid-soft: rgba(245,241,232,.04);
+  --warm-glow: rgba(95,179,191,.13);
+  --panel-shadow: rgba(0, 0, 0, .42);
 }
 
 * { box-sizing: border-box; }
@@ -19,22 +41,23 @@ body {
   margin: 0;
   color: var(--ink);
   background:
-    linear-gradient(90deg, rgba(18,20,23,.045) 1px, transparent 1px) 0 0 / 42px 42px,
-    linear-gradient(rgba(18,20,23,.035) 1px, transparent 1px) 0 0 / 42px 42px,
-    radial-gradient(circle at 12% 8%, rgba(197,123,40,.16), transparent 34%),
-    linear-gradient(135deg, #fbfaf7 0%, #f4f0e8 54%, #ebe4d7 100%);
+    linear-gradient(90deg, var(--grid-strong) 1px, transparent 1px) 0 0 / 42px 42px,
+    linear-gradient(var(--grid-soft) 1px, transparent 1px) 0 0 / 42px 42px,
+    radial-gradient(circle at 12% 8%, var(--warm-glow), transparent 34%),
+    linear-gradient(135deg, var(--porcelain) 0%, var(--paper) 54%, color-mix(in srgb, var(--paper) 86%, var(--line)) 100%);
   font-family: var(--font-body);
+  transition: background-color .2s ease, color .2s ease;
 }
 
-::selection { background: rgba(31,111,120,.2); }
+::selection { background: color-mix(in srgb, var(--measurement) 22%, transparent); }
 
 .ruler-edge {
-  background-image: repeating-linear-gradient(90deg, rgba(18,20,23,.42) 0 1px, transparent 1px 20px);
+  background-image: repeating-linear-gradient(90deg, color-mix(in srgb, var(--ink) 42%, transparent) 0 1px, transparent 1px 20px);
 }
 
 .precision-card {
-  border: 1px solid rgba(18,20,23,.12);
-  background: rgba(251,250,247,.78);
-  box-shadow: 0 28px 80px rgba(18, 20, 23, .12);
+  border: 1px solid color-mix(in srgb, var(--ink) 12%, transparent);
+  background: color-mix(in srgb, var(--porcelain) 78%, transparent);
+  box-shadow: 0 28px 80px var(--panel-shadow);
   backdrop-filter: blur(18px);
 }

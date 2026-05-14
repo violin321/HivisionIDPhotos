@@ -1,13 +1,22 @@
 import type { ProcessingTask, TaskStatus, UploadHandle } from '../../lib/api-client';
+import { usePreferences } from '../../lib/preferences';
 
 const statuses: TaskStatus[] = ['queued', 'processing', 'succeeded', 'failed', 'expired'];
 
-const labels: Record<TaskStatus, string> = {
-  queued: 'Queued',
-  processing: 'Processing',
-  succeeded: 'Succeeded',
-  failed: 'Failed',
-  expired: 'Expired',
+const labelKeys: Record<TaskStatus, 'queued' | 'processing' | 'succeeded' | 'failed' | 'expired'> = {
+  queued: 'queued',
+  processing: 'processing',
+  succeeded: 'succeeded',
+  failed: 'failed',
+  expired: 'expired',
+};
+
+const detailKeys: Record<TaskStatus, 'queuedDetail' | 'processingDetail' | 'succeededDetail' | 'failedDetail' | 'expiredDetail'> = {
+  queued: 'queuedDetail',
+  processing: 'processingDetail',
+  succeeded: 'succeededDetail',
+  failed: 'failedDetail',
+  expired: 'expiredDetail',
 };
 
 type TaskStatusRailProps = {
@@ -17,12 +26,15 @@ type TaskStatusRailProps = {
 };
 
 export function TaskStatusRail({ upload, task, errorMessage }: TaskStatusRailProps) {
+  const { t } = usePreferences();
+  const displayStatus = task?.status ? t(labelKeys[task.status]) : t('idle');
+
   return (
     <aside className="rounded-[28px] border border-ink/10 bg-porcelain/80 p-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-semibold tracking-[-0.03em]">Task model</h2>
+        <h2 className="text-2xl font-semibold tracking-[-0.03em]">{t('taskModel')}</h2>
         <span className="rounded-full border border-measurement/25 bg-measurement/10 px-3 py-1 font-mono text-[10px] uppercase tracking-[0.22em] text-measurement">
-          {task?.status ?? 'idle'}
+          {displayStatus}
         </span>
       </div>
 
@@ -35,14 +47,8 @@ export function TaskStatusRail({ upload, task, errorMessage }: TaskStatusRailPro
             <div key={status} className="grid grid-cols-[22px_1fr] gap-3">
               <div className={`mt-1 h-3 w-3 rounded-full ${active ? 'bg-amber' : complete ? 'bg-measurement' : 'bg-line'}`} />
               <div className={`rounded-2xl border p-3 ${active ? 'border-amber bg-amber/10' : 'border-ink/10 bg-porcelain/60'}`}>
-                <p className="text-sm font-semibold">{labels[status]}</p>
-                <p className="mt-1 text-xs leading-5 text-slate">
-                  {status === 'queued' && 'Task accepted; safe to poll rather than blocking request.'}
-                  {status === 'processing' && 'Official crop, background, and compliance render run through the IDCreator API adapter.'}
-                  {status === 'succeeded' && 'Result handles include fileId, previewUrl, downloadUrl, expiresAt.'}
-                  {status === 'failed' && 'Contract reserves retryable error shape for server validation failures.'}
-                  {status === 'expired' && 'Expiring handles keep web and miniapp behavior aligned.'}
-                </p>
+                <p className="text-sm font-semibold">{t(labelKeys[status])}</p>
+                <p className="mt-1 text-xs leading-5 text-slate">{t(detailKeys[status])}</p>
               </div>
             </div>
           );
@@ -61,7 +67,7 @@ export function TaskStatusRail({ upload, task, errorMessage }: TaskStatusRailPro
         <div className="flex justify-between gap-4 border-b border-line pb-3"><dt className="text-slate">uploadId</dt><dd className="max-w-40 truncate font-mono text-xs">{upload?.uploadId ?? '—'}</dd></div>
         <div className="flex justify-between gap-4 border-b border-line pb-3"><dt className="text-slate">fileId</dt><dd className="max-w-40 truncate font-mono text-xs">{upload?.fileId ?? '—'}</dd></div>
         <div className="flex justify-between gap-4 border-b border-line pb-3"><dt className="text-slate">taskId</dt><dd className="max-w-40 truncate font-mono text-xs">{task?.taskId ?? '—'}</dd></div>
-        <div className="flex justify-between gap-4"><dt className="text-slate">platform</dt><dd className="font-mono text-xs">{task?.platform ?? 'web / miniapp-ready'}</dd></div>
+        <div className="flex justify-between gap-4"><dt className="text-slate">platform</dt><dd className="font-mono text-xs">{task?.platform ?? t('platformFallback')}</dd></div>
       </dl>
     </aside>
   );

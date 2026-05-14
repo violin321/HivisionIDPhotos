@@ -5,17 +5,17 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        ink: '#121417',
-        graphite: '#252a2f',
-        slate: '#69737d',
-        paper: '#f4f0e8',
-        porcelain: '#fbfaf7',
-        line: '#d8d1c4',
-        measurement: '#1f6f78',
-        amber: '#c57b28',
+        ink: 'var(--ink)',
+        graphite: 'var(--graphite)',
+        slate: 'var(--slate)',
+        paper: 'var(--paper)',
+        porcelain: 'var(--porcelain)',
+        line: 'var(--line)',
+        measurement: 'var(--measurement)',
+        amber: 'var(--amber)',
       },
       boxShadow: {
-        panel: '0 28px 80px rgba(18, 20, 23, 0.16)',
+        panel: '0 28px 80px var(--panel-shadow)',
       },
     },
   },

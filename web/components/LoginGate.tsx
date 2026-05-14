@@ -2,8 +2,10 @@
 
 import { useEffect, useState } from 'react';
 import { getAuthState, login, logout, type AuthState } from '../lib/api-client';
+import { usePreferences } from '../lib/preferences';
 
 function LoginPanel({ onAuthenticated }: { onAuthenticated: (state: AuthState) => void }) {
+  const { t } = usePreferences();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
@@ -17,7 +19,7 @@ function LoginPanel({ onAuthenticated }: { onAuthenticated: (state: AuthState) =
       const state = await login(username, password);
       onAuthenticated(state);
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Login failed.');
+      setErrorMessage(error instanceof Error ? error.message : t('loginFailed'));
     } finally {
       setBusy(false);
     }
@@ -26,17 +28,15 @@ function LoginPanel({ onAuthenticated }: { onAuthenticated: (state: AuthState) =
   return (
     <main className="flex min-h-screen items-center justify-center px-5 py-8 text-ink">
       <section className="w-full max-w-md rounded-[30px] border border-ink/10 bg-porcelain/85 p-8 shadow-panel">
-        <p className="font-mono text-[11px] uppercase tracking-[0.34em] text-slate">HivisionIDPhotos</p>
-        <h1 className="mt-3 font-serif text-4xl leading-none tracking-[-0.04em]">Studio Login</h1>
-        <p className="mt-4 text-sm leading-6 text-graphite">
-          Sign in to access uploads, task processing, and signed downloads.
-        </p>
+        <p className="font-mono text-[11px] uppercase tracking-[0.34em] text-slate">{t('appSubtitle')}</p>
+        <h1 className="mt-3 font-serif text-4xl leading-none tracking-[-0.04em]">{t('loginTitle')}</h1>
+        <p className="mt-4 text-sm leading-6 text-graphite">{t('loginIntro')}</p>
 
         <form className="mt-8 grid gap-4" onSubmit={handleSubmit}>
           <label className="grid gap-2 text-sm font-semibold text-ink">
-            Username
+            {t('username')}
             <input
-              className="rounded-2xl border border-ink/15 bg-white/80 px-4 py-3 font-mono text-sm outline-none focus:border-measurement"
+              className="rounded-2xl border border-ink/15 bg-porcelain/80 px-4 py-3 font-mono text-sm text-ink outline-none focus:border-measurement"
               autoComplete="username"
               value={username}
               onChange={(event) => setUsername(event.target.value)}
@@ -45,9 +45,9 @@ function LoginPanel({ onAuthenticated }: { onAuthenticated: (state: AuthState) =
             />
           </label>
           <label className="grid gap-2 text-sm font-semibold text-ink">
-            Password
+            {t('password')}
             <input
-              className="rounded-2xl border border-ink/15 bg-white/80 px-4 py-3 font-mono text-sm outline-none focus:border-measurement"
+              className="rounded-2xl border border-ink/15 bg-porcelain/80 px-4 py-3 font-mono text-sm text-ink outline-none focus:border-measurement"
               type="password"
               autoComplete="current-password"
               value={password}
@@ -62,7 +62,7 @@ function LoginPanel({ onAuthenticated }: { onAuthenticated: (state: AuthState) =
             disabled={busy}
             className="rounded-full bg-ink px-5 py-3 text-sm font-bold uppercase tracking-[0.18em] text-porcelain transition hover:bg-graphite disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {busy ? 'Signing in…' : 'Sign in'}
+            {busy ? t('signingIn') : t('signIn')}
           </button>
         </form>
       </section>
@@ -71,6 +71,7 @@ function LoginPanel({ onAuthenticated }: { onAuthenticated: (state: AuthState) =
 }
 
 export function LoginGate({ children }: { children: (session: AuthState, onLogout: () => Promise<void>) => React.ReactNode }) {
+  const { t } = usePreferences();
   const [session, setSession] = useState<AuthState | null>(null);
   const [checking, setChecking] = useState(true);
 
@@ -100,7 +101,7 @@ export function LoginGate({ children }: { children: (session: AuthState, onLogou
     return (
       <main className="flex min-h-screen items-center justify-center px-5 text-ink">
         <div className="rounded-full border border-ink/10 bg-porcelain/80 px-5 py-3 font-mono text-xs uppercase tracking-[0.22em] text-slate shadow-panel">
-          Checking session…
+          {t('checkingSession')}
         </div>
       </main>
     );

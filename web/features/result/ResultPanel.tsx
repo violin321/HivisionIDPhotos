@@ -1,10 +1,18 @@
 import type { BackgroundColor, IdPhotoTemplate, ProcessingTask } from '../../lib/api-client';
+import { usePreferences } from '../../lib/preferences';
 
 const backgroundClass: Record<BackgroundColor, string> = {
   white: 'from-[#ffffff] to-[#f2f1ed]',
   blue: 'from-[#cde3f1] to-[#8fb7d6]',
   red: 'from-[#e8a39c] to-[#b84a42]',
   gray: 'from-[#e2dfd8] to-[#bdb8ae]',
+};
+
+const backgroundLabelKeys: Record<BackgroundColor, 'bgWhite' | 'bgBlue' | 'bgRed' | 'bgGray'> = {
+  white: 'bgWhite',
+  blue: 'bgBlue',
+  red: 'bgRed',
+  gray: 'bgGray',
 };
 
 type ResultPanelProps = {
@@ -15,19 +23,21 @@ type ResultPanelProps = {
 };
 
 export function ResultPanel({ task, template, selectedBackground, sourcePreviewUrl }: ResultPanelProps) {
+  const { t } = usePreferences();
   const succeeded = task?.status === 'succeeded' && task.officialResult;
   const officialPreviewUrl = task?.officialResult?.previewUrl;
   const aiPreviewUrl = task?.aiEnhanceResult?.previewUrl;
+  const aiKind = task?.options.aiEnhancePreviewKind ?? 'none';
 
   return (
     <section className="rounded-[28px] border border-ink/10 bg-porcelain/80 p-6">
       <div className="flex items-center justify-between gap-4">
         <div>
-          <p className="font-mono text-[11px] uppercase tracking-[0.28em] text-slate">Official result</p>
-          <h2 className="mt-2 text-2xl font-semibold tracking-[-0.03em]">Certificate output card</h2>
+          <p className="font-mono text-[11px] uppercase tracking-[0.28em] text-slate">{t('officialResult')}</p>
+          <h2 className="mt-2 text-2xl font-semibold tracking-[-0.03em]">{t('outputCard')}</h2>
         </div>
         <span className="rounded-full border border-amber/40 bg-amber/10 px-3 py-1 font-mono text-[10px] uppercase tracking-[0.22em] text-amber">
-          {succeeded ? 'ready' : 'waiting'}
+          {succeeded ? t('ready') : t('waiting')}
         </span>
       </div>
 
@@ -37,7 +47,7 @@ export function ResultPanel({ task, template, selectedBackground, sourcePreviewU
           <div className={`relative h-full overflow-hidden rounded-[16px] border border-ink/10 bg-gradient-to-b ${backgroundClass[selectedBackground]}`}>
             {officialPreviewUrl || sourcePreviewUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={officialPreviewUrl ?? sourcePreviewUrl ?? ''} alt={officialPreviewUrl ? 'Official IDCreator result preview' : 'Source portrait preview'} className={officialPreviewUrl ? 'h-full w-full object-contain' : 'absolute inset-x-[18%] bottom-0 h-[76%] w-[64%] rounded-t-[44%] object-cover object-top mix-blend-multiply grayscale-[15%]'} />
+              <img src={officialPreviewUrl ?? sourcePreviewUrl ?? ''} alt={officialPreviewUrl ? t('officialAlt') : t('sourceAlt')} className={officialPreviewUrl ? 'h-full w-full object-contain' : 'absolute inset-x-[18%] bottom-0 h-[76%] w-[64%] rounded-t-[44%] object-cover object-top mix-blend-multiply grayscale-[15%]'} />
             ) : (
               <div className="absolute inset-x-[18%] bottom-0 flex h-[76%] flex-col items-center justify-end">
                 <div className="mb-[-6px] h-14 w-14 rounded-full border border-ink/10 bg-[#c9bca9]" />
@@ -52,34 +62,30 @@ export function ResultPanel({ task, template, selectedBackground, sourcePreviewU
 
         <div className="flex flex-col justify-between">
           <div>
-            <p className="text-sm leading-6 text-slate">
-              Phase 5B returns short-lived signed officialResult URLs from deterministic Hivision IDCreator. The AI preview lane is labelled local-derived-preview and never replaces officialResult.
-            </p>
+            <p className="text-sm leading-6 text-slate">{t('resultIntro')}</p>
             <dl className="mt-5 grid gap-3 text-sm sm:grid-cols-2">
-              <div className="rounded-2xl border border-ink/10 bg-paper/60 p-3"><dt className="text-slate">Spec</dt><dd className="mt-1 font-semibold">{template?.label ?? '—'} · {template?.size ?? '—'}</dd></div>
-              <div className="rounded-2xl border border-ink/10 bg-paper/60 p-3"><dt className="text-slate">Background</dt><dd className="mt-1 font-semibold">{selectedBackground}</dd></div>
+              <div className="rounded-2xl border border-ink/10 bg-paper/60 p-3"><dt className="text-slate">{t('spec')}</dt><dd className="mt-1 font-semibold">{template?.label ?? '—'} · {template?.size ?? '—'}</dd></div>
+              <div className="rounded-2xl border border-ink/10 bg-paper/60 p-3"><dt className="text-slate">{t('background')}</dt><dd className="mt-1 font-semibold">{t(backgroundLabelKeys[selectedBackground])}</dd></div>
               <div className="rounded-2xl border border-ink/10 bg-paper/60 p-3"><dt className="text-slate">fileId</dt><dd className="mt-1 truncate font-mono text-xs">{task?.officialResult?.fileId ?? '—'}</dd></div>
               <div className="rounded-2xl border border-ink/10 bg-paper/60 p-3"><dt className="text-slate">expiresAt</dt><dd className="mt-1 truncate font-mono text-xs">{task?.officialResult?.expiresAt ?? '—'}</dd></div>
-              <div className="rounded-2xl border border-ink/10 bg-paper/60 p-3"><dt className="text-slate">Result source</dt><dd className="mt-1 font-semibold">{succeeded ? 'officialResult · IDCreator' : '—'}</dd></div>
-              <div className="rounded-2xl border border-ink/10 bg-paper/60 p-3"><dt className="text-slate">AI preview</dt><dd className="mt-1 font-semibold">{task?.options.aiEnhancePreviewKind ?? 'none'}</dd></div>
+              <div className="rounded-2xl border border-ink/10 bg-paper/60 p-3"><dt className="text-slate">{t('resultSource')}</dt><dd className="mt-1 font-semibold">{succeeded ? 'officialResult · IDCreator' : '—'}</dd></div>
+              <div className="rounded-2xl border border-ink/10 bg-paper/60 p-3"><dt className="text-slate">{t('aiPreview')}</dt><dd className="mt-1 font-semibold">{aiKind}</dd></div>
             </dl>
           </div>
 
           <div className="mt-5 flex flex-wrap gap-3">
-            <a aria-disabled={!succeeded} href={task?.officialResult?.previewUrl ?? '#'} className={`rounded-2xl px-4 py-3 text-sm font-semibold ${succeeded ? 'bg-ink text-porcelain' : 'pointer-events-none bg-line text-slate'}`}>Signed preview</a>
-            <a aria-disabled={!succeeded} href={task?.officialResult?.downloadUrl ?? '#'} className={`rounded-2xl border px-4 py-3 text-sm font-semibold ${succeeded ? 'border-ink/15 text-ink' : 'pointer-events-none border-line text-slate'}`}>Signed download</a>
+            <a aria-disabled={!succeeded} href={task?.officialResult?.previewUrl ?? '#'} className={`rounded-2xl px-4 py-3 text-sm font-semibold ${succeeded ? 'bg-ink text-porcelain' : 'pointer-events-none bg-line text-slate'}`}>{t('signedPreview')}</a>
+            <a aria-disabled={!succeeded} href={task?.officialResult?.downloadUrl ?? '#'} className={`rounded-2xl border px-4 py-3 text-sm font-semibold ${succeeded ? 'border-ink/15 text-ink' : 'pointer-events-none border-line text-slate'}`}>{t('signedDownload')}</a>
           </div>
         </div>
       </div>
 
       <div className="mt-5 rounded-[20px] border border-ink/10 bg-ink p-4 text-porcelain">
-        <p className="font-mono text-[10px] uppercase tracking-[0.26em] text-[#b7c9cc]">AI Enhance lane</p>
-        <p className="mt-2 text-sm leading-6 text-[#d8d1c4]">
-          Optional preview stays in a separate AI lane. It is currently {task?.options.aiEnhancePreviewKind ?? 'none'} and will never replace this official result card or expose provider keys/base URLs in the client.
-        </p>
+        <p className="font-mono text-[10px] uppercase tracking-[0.26em] text-[#b7c9cc]">{t('aiLane')}</p>
+        <p className="mt-2 text-sm leading-6 text-[#d8d1c4]">{t('aiLaneCopy', { kind: aiKind })}</p>
         {aiPreviewUrl && (
           <a href={aiPreviewUrl} className="mt-3 inline-block rounded-2xl border border-[#d8d1c4]/30 px-4 py-2 text-sm font-semibold text-porcelain">
-            Open local-derived-preview
+            {t('openLocalPreview')}
           </a>
         )}
       </div>

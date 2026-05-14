@@ -5,7 +5,8 @@ import { ResultPanel } from '../features/result/ResultPanel';
 import { TaskStatusRail } from '../features/idphoto-workflow/TaskStatusRail';
 import { WorkflowControls } from '../features/idphoto-workflow/WorkflowControls';
 import { UploadBay } from '../features/upload/UploadBay';
-import { apiCards, stages } from '../lib/mock-data';
+import { apiCards } from '../lib/mock-data';
+import { usePreferences, type LanguagePreference, type ThemePreference } from '../lib/preferences';
 import {
   createTask,
   createUpload,
@@ -33,31 +34,33 @@ function formatBytes(value: number) {
 }
 
 function AdminStatusPanel({ stats, onRefresh }: { stats: AdminStats | null; onRefresh: () => void }) {
+  const { t } = usePreferences();
   return (
     <div className="mt-5 rounded-2xl border border-ink/10 bg-porcelain/70 p-4 text-xs leading-5 text-slate">
       <div className="flex items-center justify-between gap-3">
-        <p className="font-mono text-[11px] font-bold uppercase tracking-[0.22em] text-graphite">Admin stats</p>
-        <button type="button" onClick={onRefresh} className="rounded-full border border-ink/15 px-3 py-1 font-semibold uppercase tracking-[0.16em] text-graphite transition hover:border-ink/35">Refresh</button>
+        <p className="font-mono text-[11px] font-bold uppercase tracking-[0.22em] text-graphite">{t('adminStats')}</p>
+        <button type="button" onClick={onRefresh} className="rounded-full border border-ink/15 px-3 py-1 font-semibold uppercase tracking-[0.16em] text-graphite transition hover:border-ink/35">{t('refresh')}</button>
       </div>
       {stats ? (
         <dl className="mt-3 grid grid-cols-2 gap-2">
-          <div><dt>Phase</dt><dd className="font-mono text-ink">{stats.phase}</dd></div>
-          <div><dt>24h logins</dt><dd className="font-mono text-ink">{stats.last24h.logins}</dd></div>
-          <div><dt>24h uploads</dt><dd className="font-mono text-ink">{stats.last24h.uploads}</dd></div>
-          <div><dt>Tasks ok/fail</dt><dd className="font-mono text-ink">{stats.last24h.tasksSucceeded}/{stats.last24h.tasksFailed}</dd></div>
-          <div><dt>Downloads</dt><dd className="font-mono text-ink">{stats.last24h.downloads}</dd></div>
-          <div><dt>Rate hits</dt><dd className="font-mono text-ink">{stats.last24h.rateLimitHits}</dd></div>
-          <div><dt>Uploads disk</dt><dd className="font-mono text-ink">{formatBytes(stats.runtime.uploadsBytes)}</dd></div>
-          <div><dt>Results disk</dt><dd className="font-mono text-ink">{formatBytes(stats.runtime.resultsBytes)}</dd></div>
+          <div><dt>{t('phase')}</dt><dd className="font-mono text-ink">{stats.phase}</dd></div>
+          <div><dt>{t('logins24h')}</dt><dd className="font-mono text-ink">{stats.last24h.logins}</dd></div>
+          <div><dt>{t('uploads24h')}</dt><dd className="font-mono text-ink">{stats.last24h.uploads}</dd></div>
+          <div><dt>{t('tasksOkFail')}</dt><dd className="font-mono text-ink">{stats.last24h.tasksSucceeded}/{stats.last24h.tasksFailed}</dd></div>
+          <div><dt>{t('downloads')}</dt><dd className="font-mono text-ink">{stats.last24h.downloads}</dd></div>
+          <div><dt>{t('rateHits')}</dt><dd className="font-mono text-ink">{stats.last24h.rateLimitHits}</dd></div>
+          <div><dt>{t('uploadsDisk')}</dt><dd className="font-mono text-ink">{formatBytes(stats.runtime.uploadsBytes)}</dd></div>
+          <div><dt>{t('resultsDisk')}</dt><dd className="font-mono text-ink">{formatBytes(stats.runtime.resultsBytes)}</dd></div>
         </dl>
       ) : (
-        <p className="mt-3">Stats load after login. API: /api/admin/stats</p>
+        <p className="mt-3">{t('statsLoading')}</p>
       )}
     </div>
   );
 }
 
 function HeroPlate({ previewUrl, background }: { previewUrl: string | null; background: BackgroundColor }) {
+  const { t } = usePreferences();
   const backgroundTone = {
     white: 'from-[#f8f7f2] via-[#eeeae1] to-[#d7cec0]',
     blue: 'from-[#dbeaf3] via-[#b7d2e6] to-[#86abc9]',
@@ -66,18 +69,18 @@ function HeroPlate({ previewUrl, background }: { previewUrl: string | null; back
   }[background];
 
   return (
-    <div className="relative mx-auto aspect-[3/4] w-full max-w-[310px] rounded-[30px] border border-ink/15 bg-[#ece6da] p-5 shadow-panel">
+    <div className="relative mx-auto aspect-[3/4] w-full max-w-[310px] rounded-[30px] border border-ink/15 bg-[#ece6da] p-5 shadow-panel dark:bg-[#20262a]">
       <div className="absolute -left-7 top-10 h-56 w-5 border-y border-ink/25">
         <div className="ruler-edge h-full opacity-70" />
       </div>
       <div className="absolute -right-5 bottom-8 rounded-full border border-amber/40 bg-amber/10 px-3 py-2 text-[10px] font-bold uppercase tracking-[0.22em] text-amber">
-        phase 2.5
+        phase 5E
       </div>
       <div className="h-full rounded-[22px] border border-ink/10 bg-porcelain p-4">
         <div className={`relative h-full overflow-hidden rounded-[18px] bg-gradient-to-b ${backgroundTone}`}>
           {previewUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={previewUrl} alt="Workbench portrait preview" className="absolute inset-x-[16%] bottom-0 h-[82%] w-[68%] rounded-t-[42%] object-cover object-top mix-blend-multiply grayscale-[10%]" />
+            <img src={previewUrl} alt={t('workbenchAlt')} className="absolute inset-x-[16%] bottom-0 h-[82%] w-[68%] rounded-t-[42%] object-cover object-top mix-blend-multiply grayscale-[10%]" />
           ) : (
             <div className="absolute inset-x-0 bottom-0 flex flex-col items-center justify-end">
               <div className="mb-[-10px] h-24 w-24 rounded-full border border-ink/10 bg-[#c9bca9] shadow-inner" />
@@ -93,7 +96,101 @@ function HeroPlate({ previewUrl, background }: { previewUrl: string | null; back
   );
 }
 
+function SettingsDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const { t, theme, language, setTheme, setLanguage } = usePreferences();
+  if (!open) return null;
+
+  const themeOptions: Array<{ value: ThemePreference; label: string }> = [
+    { value: 'light', label: t('themeLight') },
+    { value: 'dark', label: t('themeDark') },
+    { value: 'system', label: t('themeSystem') },
+  ];
+  const languageOptions: Array<{ value: LanguagePreference; label: string }> = [
+    { value: 'zh-CN', label: '中文（中国）' },
+    { value: 'en-US', label: 'English (US)' },
+  ];
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/35 px-4 py-5 backdrop-blur-sm sm:items-center" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <section className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-[30px] border border-ink/10 bg-porcelain p-5 text-ink shadow-panel md:p-7">
+        <div className="flex items-start justify-between gap-4 border-b border-ink/10 pb-4">
+          <div>
+            <p className="font-mono text-[11px] uppercase tracking-[0.28em] text-measurement">{t('settings')}</p>
+            <h2 id="settings-title" className="mt-2 font-serif text-3xl leading-none tracking-[-0.04em]">{t('settingsTitle')}</h2>
+            <p className="mt-3 max-w-2xl text-sm leading-6 text-slate">{t('settingsIntro')}</p>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-full border border-ink/15 px-3 py-2 text-xs font-semibold text-graphite hover:border-ink/35" aria-label={t('closeSettings')}>
+            ✕
+          </button>
+        </div>
+
+        <div className="mt-5 grid gap-4">
+          <section className="rounded-[24px] border border-ink/10 bg-paper/55 p-4">
+            <h3 className="text-lg font-semibold">{t('appearance')}</h3>
+            <p className="mt-1 text-sm leading-6 text-slate">{t('appearanceHint')}</p>
+            <div className="mt-4 grid gap-2 sm:grid-cols-3" role="radiogroup" aria-label={t('appearance')}>
+              {themeOptions.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  role="radio"
+                  aria-checked={theme === option.value}
+                  onClick={() => setTheme(option.value)}
+                  className={`rounded-2xl border px-4 py-3 text-left text-sm font-semibold transition ${theme === option.value ? 'border-measurement bg-measurement/10 text-ink' : 'border-ink/10 bg-porcelain/70 text-graphite hover:border-ink/25'}`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </section>
+
+          <section className="rounded-[24px] border border-ink/10 bg-paper/55 p-4">
+            <h3 className="text-lg font-semibold">{t('language')}</h3>
+            <p className="mt-1 text-sm leading-6 text-slate">{t('languageHint')}</p>
+            <div className="mt-4 grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label={t('language')}>
+              {languageOptions.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  role="radio"
+                  aria-checked={language === option.value}
+                  onClick={() => setLanguage(option.value)}
+                  className={`rounded-2xl border px-4 py-3 text-left text-sm font-semibold transition ${language === option.value ? 'border-amber bg-amber/10 text-ink' : 'border-ink/10 bg-porcelain/70 text-graphite hover:border-ink/25'}`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </section>
+
+          <section className="rounded-[24px] border border-ink/10 bg-ink p-4 text-porcelain">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-semibold">{t('aiProvider')}</h3>
+                <p className="mt-1 max-w-2xl text-sm leading-6 text-[#d8d1c4]">{t('aiProviderHint')}</p>
+              </div>
+              <span className="rounded-full border border-amber/40 bg-amber/10 px-3 py-1 font-mono text-[10px] uppercase tracking-[0.2em] text-amber">{t('providerNotConnected')}</span>
+            </div>
+            <div className="mt-4 grid gap-3 md:grid-cols-2">
+              <div className="rounded-2xl border border-[#d8d1c4]/20 bg-[#d8d1c4]/10 p-4">
+                <p className="font-mono text-[10px] uppercase tracking-[0.22em] text-[#b7c9cc]">{t('currentProvider')}</p>
+                <p className="mt-2 font-semibold">local-derived-preview</p>
+              </div>
+              <div className="rounded-2xl border border-[#d8d1c4]/20 bg-[#d8d1c4]/10 p-4 opacity-75">
+                <p className="font-mono text-[10px] uppercase tracking-[0.22em] text-[#b7c9cc]">{t('futureProvider')}</p>
+                <p className="mt-2 font-semibold">{t('reservedReadonly')}</p>
+              </div>
+            </div>
+            <p className="mt-4 rounded-2xl border border-measurement/30 bg-measurement/10 p-3 text-sm leading-6 text-[#e7efe9]">{t('providerBoundary')}</p>
+          </section>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 export default function StudioShell({ username, onLogout }: { username?: string | null; onLogout?: () => Promise<void> }) {
+  const { t } = usePreferences();
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [upload, setUpload] = useState<UploadHandle | null>(null);
@@ -102,10 +199,27 @@ export default function StudioShell({ username, onLogout }: { username?: string 
   const [selectedBackground, setSelectedBackground] = useState<BackgroundColor>('white');
   const [aiPreview, setAiPreview] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [adminStats, setAdminStats] = useState<AdminStats | null>(null);
 
   const template = useMemo(() => templates.find((item) => item.templateId === selectedTemplate), [selectedTemplate]);
+  const localizedStages = useMemo(() => [
+    { label: t('uploadStage'), detail: t('uploadStageDetail'), state: 'active' },
+    { label: t('specStage'), detail: t('specStageDetail'), state: 'pending' },
+    { label: t('taskStage'), detail: t('taskStageDetail'), state: 'pending' },
+    { label: t('resultStage'), detail: t('resultStageDetail'), state: 'pending' },
+    { label: t('aiPreviewStage'), detail: t('aiPreviewStageDetail'), state: 'pending' },
+  ], [t]);
+  const apiPurposeByPath: Record<string, string> = {
+    '/api/config': t('apiConfigPurpose'),
+    '/api/uploads': t('apiUploadsPurpose'),
+    '/api/tasks': t('apiTasksPurpose'),
+    '/api/tasks/{id}': t('apiTaskPollPurpose'),
+    '/api/templates': t('apiTemplatesPurpose'),
+    '/api/health': t('apiHealthPurpose'),
+    '/api/admin/stats': t('apiAdminStatsPurpose'),
+  };
 
   async function refreshAdminStats() {
     try {
@@ -140,7 +254,7 @@ export default function StudioShell({ username, onLogout }: { username?: string 
       setUpload(nextUpload);
       void refreshAdminStats();
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Upload failed.');
+      setErrorMessage(error instanceof Error ? error.message : t('uploadFailed'));
     } finally {
       setBusy(false);
     }
@@ -177,43 +291,47 @@ export default function StudioShell({ username, onLogout }: { username?: string 
       }
       void refreshAdminStats();
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Task creation failed.');
+      setErrorMessage(error instanceof Error ? error.message : t('taskFailed'));
       setBusy(false);
     }
   }
 
   return (
     <main className="min-h-screen px-5 py-6 text-ink md:px-10 lg:px-14">
+      <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <section className="mx-auto max-w-7xl overflow-hidden rounded-[34px] border border-ink/10 bg-porcelain/70 shadow-panel">
         <div className="grid min-h-[calc(100vh-3rem)] lg:grid-cols-[1.08fr_.92fr]">
           <div className="relative p-7 md:p-11 lg:p-14">
-            <div className="mb-12 flex items-center justify-between border-b border-ink/10 pb-4">
+            <div className="mb-12 flex items-center justify-between gap-5 border-b border-ink/10 pb-4">
               <div>
-                <p className="font-mono text-[11px] uppercase tracking-[0.34em] text-slate">HivisionIDPhotos</p>
-                <h1 className="mt-2 font-serif text-4xl leading-[0.95] tracking-[-0.04em] md:text-6xl">
-                  Precision Studio
-                </h1>
+                <p className="font-mono text-[11px] uppercase tracking-[0.34em] text-slate">{t('appSubtitle')}</p>
+                <h1 className="mt-2 font-serif text-4xl leading-[0.95] tracking-[-0.04em] md:text-6xl">{t('studioTitle')}</h1>
               </div>
-              <div className="flex items-center gap-3">
+              <div className="flex flex-wrap items-center justify-end gap-3">
                 {username ? <span className="hidden font-mono text-[11px] uppercase tracking-[0.22em] text-slate md:inline">{username}</span> : null}
+                <button
+                  type="button"
+                  onClick={() => setSettingsOpen(true)}
+                  className="rounded-full border border-measurement/30 bg-measurement/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-measurement transition hover:border-measurement/60"
+                >
+                  {t('settings')}
+                </button>
                 {onLogout ? (
                   <button
                     type="button"
                     onClick={() => void onLogout()}
                     className="rounded-full border border-ink/15 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-graphite transition hover:border-ink/35 hover:text-ink"
                   >
-                    Logout
+                    {t('logout')}
                   </button>
                 ) : null}
-                <StatusPill>Phase 5D</StatusPill>
+                <StatusPill>{t('phaseBadge')}</StatusPill>
               </div>
             </div>
 
             <div className="grid gap-8 lg:grid-cols-[1fr_240px]">
               <div>
-                <p className="max-w-2xl text-lg leading-8 text-graphite md:text-xl">
-                  A measured, compliance-first workbench for certificate-ready portraits across web and future miniapp clients.
-                </p>
+                <p className="max-w-2xl text-lg leading-8 text-graphite md:text-xl">{t('studioIntro')}</p>
                 <div className="mt-8">
                   <UploadBay file={file} previewUrl={previewUrl} isUploading={busy && !task} onSelect={handleSelect} />
                 </div>
@@ -222,7 +340,7 @@ export default function StudioShell({ username, onLogout }: { username?: string 
             </div>
 
             <div className="mt-10 grid gap-3 md:grid-cols-5">
-              {stages.map((stage, index) => (
+              {localizedStages.map((stage, index) => (
                 <div key={stage.label} className="precision-card rounded-[18px] p-4">
                   <div className="flex items-center justify-between">
                     <span className="font-mono text-[11px] text-slate">0{index + 1}</span>
@@ -250,12 +368,10 @@ export default function StudioShell({ username, onLogout }: { username?: string 
             </div>
           </div>
 
-          <aside className="border-t border-ink/10 bg-[#e8e0d1]/60 p-7 md:p-11 lg:border-l lg:border-t-0 lg:p-12">
+          <aside className="border-t border-ink/10 bg-paper/60 p-7 md:p-11 lg:border-l lg:border-t-0 lg:p-12">
             <TaskStatusRail upload={upload} task={task} errorMessage={errorMessage} />
 
-            <div className="mt-5 rounded-2xl border border-ink/10 bg-porcelain/70 p-4 text-xs leading-5 text-slate">
-              Privacy note: uploads accept JPG/PNG/WebP only, are size-limited, and expire automatically with generated results.
-            </div>
+            <div className="mt-5 rounded-2xl border border-ink/10 bg-porcelain/70 p-4 text-xs leading-5 text-slate">{t('privacyNote')}</div>
 
             <AdminStatusPanel stats={adminStats} onRefresh={() => void refreshAdminStats()} />
 
@@ -269,7 +385,7 @@ export default function StudioShell({ username, onLogout }: { username?: string 
                   <span className="font-mono text-xs font-bold text-measurement">{method}</span>
                   <div>
                     <p className="font-mono text-xs text-ink">{path}</p>
-                    <p className="mt-1 text-xs leading-5 text-slate">{purpose}</p>
+                    <p className="mt-1 text-xs leading-5 text-slate">{apiPurposeByPath[path] ?? purpose}</p>
                   </div>
                 </div>
               ))}
