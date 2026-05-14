@@ -1,0 +1,2 @@
+# Run idphoto-ai cleanup every 15 minutes. Install manually only after review.
+*/15 * * * * cd /root/.openclaw/workspace-programmer/HivisionIDPhotos && IDPHOTO_SKIP_STARTUP_CLEANUP=1 .venv/bin/python scripts/cleanup_runtime.py --json >> .runtime/cleanup.log 2>&1

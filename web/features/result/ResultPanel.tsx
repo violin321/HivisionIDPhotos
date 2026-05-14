@@ -53,7 +53,7 @@ export function ResultPanel({ task, template, selectedBackground, sourcePreviewU
         <div className="flex flex-col justify-between">
           <div>
             <p className="text-sm leading-6 text-slate">
-              Phase 4 returns expiring officialResult URLs from deterministic Hivision IDCreator. The AI preview lane is labelled local-derived-preview and never replaces officialResult.
+              Phase 5B returns short-lived signed officialResult URLs from deterministic Hivision IDCreator. The AI preview lane is labelled local-derived-preview and never replaces officialResult.
             </p>
             <dl className="mt-5 grid gap-3 text-sm sm:grid-cols-2">
               <div className="rounded-2xl border border-ink/10 bg-paper/60 p-3"><dt className="text-slate">Spec</dt><dd className="mt-1 font-semibold">{template?.label ?? '—'} · {template?.size ?? '—'}</dd></div>
@@ -66,8 +66,8 @@ export function ResultPanel({ task, template, selectedBackground, sourcePreviewU
           </div>
 
           <div className="mt-5 flex flex-wrap gap-3">
-            <a aria-disabled={!succeeded} href={task?.officialResult?.previewUrl ?? '#'} className={`rounded-2xl px-4 py-3 text-sm font-semibold ${succeeded ? 'bg-ink text-porcelain' : 'pointer-events-none bg-line text-slate'}`}>Preview URL</a>
-            <a aria-disabled={!succeeded} href={task?.officialResult?.downloadUrl ?? '#'} className={`rounded-2xl border px-4 py-3 text-sm font-semibold ${succeeded ? 'border-ink/15 text-ink' : 'pointer-events-none border-line text-slate'}`}>Download URL</a>
+            <a aria-disabled={!succeeded} href={task?.officialResult?.previewUrl ?? '#'} className={`rounded-2xl px-4 py-3 text-sm font-semibold ${succeeded ? 'bg-ink text-porcelain' : 'pointer-events-none bg-line text-slate'}`}>Signed preview</a>
+            <a aria-disabled={!succeeded} href={task?.officialResult?.downloadUrl ?? '#'} className={`rounded-2xl border px-4 py-3 text-sm font-semibold ${succeeded ? 'border-ink/15 text-ink' : 'pointer-events-none border-line text-slate'}`}>Signed download</a>
           </div>
         </div>
       </div>

@@ -1,0 +1,11 @@
+[Unit]
+Description=Run idphoto-ai runtime cleanup every 15 minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=15min
+AccuracySec=1min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

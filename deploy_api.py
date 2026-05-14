@@ -1,7 +1,12 @@
 from concurrent.futures import ThreadPoolExecutor
+import base64
+import hashlib
+import hmac
 import json
+import mimetypes
 import os
 from fastapi import FastAPI, UploadFile, Form, File, HTTPException, BackgroundTasks
+from fastapi.responses import FileResponse
 import logging
 import shutil
 import time
@@ -41,6 +46,7 @@ from starlette.formparsers import MultiPartParser
 MAX_UPLOAD_BYTES = int(os.environ.get("IDPHOTO_MAX_UPLOAD_BYTES", str(20 * 1024 * 1024)))
 MAX_IMAGE_PIXELS = int(os.environ.get("IDPHOTO_MAX_IMAGE_PIXELS", str(24_000_000)))
 RUNTIME_TTL_SECONDS = int(os.environ.get("IDPHOTO_RUNTIME_TTL_SECONDS", str(6 * 60 * 60)))
+DOWNLOAD_TTL_SECONDS = int(os.environ.get("IDPHOTO_DOWNLOAD_TTL_SECONDS", str(min(RUNTIME_TTL_SECONDS, 30 * 60))))
 ALLOWED_UPLOAD_TYPES: dict[str, set[str]] = {
     "image/jpeg": {".jpg", ".jpeg"},
     "image/png": {".png"},
@@ -56,6 +62,13 @@ MultiPartParser.max_part_size = min(MAX_UPLOAD_BYTES, 20 * 1024 * 1024)
 MultiPartParser.max_file_size = MAX_UPLOAD_BYTES
 
 logger = logging.getLogger(__name__)
+
+_download_secret = os.environ.get("IDPHOTO_DOWNLOAD_SIGNING_SECRET")
+if _download_secret:
+    DOWNLOAD_SIGNING_SECRET = _download_secret.encode("utf-8")
+else:
+    DOWNLOAD_SIGNING_SECRET = os.urandom(32)
+    logger.warning("[API] IDPHOTO_DOWNLOAD_SIGNING_SECRET is not set; using an ephemeral download signing secret for this process.")
 
 app = FastAPI()
 creator = IDCreator()
@@ -212,13 +225,68 @@ def task_public_result(task_id: str, filename: str) -> str:
     return public_runtime_url("results", f"{task_id}/{filename}")
 
 
+def _b64url_encode(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
+
+
+def _b64url_decode(data: str) -> bytes:
+    padding = "=" * (-len(data) % 4)
+    return base64.urlsafe_b64decode(data + padding)
+
+
+def result_relative_path(task_id: str, filename: str) -> str:
+    return f"{task_id}/{Path(filename).name}"
+
+
+def signed_download_url(task_id: str, filename: str, purpose: Literal["preview", "download"] = "download") -> tuple[str, str]:
+    expires_at_ts = int(time.time() + min(DOWNLOAD_TTL_SECONDS, RUNTIME_TTL_SECONDS))
+    payload = {
+        "path": result_relative_path(task_id, filename),
+        "purpose": purpose,
+        "exp": expires_at_ts,
+    }
+    payload_bytes = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    payload_part = _b64url_encode(payload_bytes)
+    signature = hmac.new(DOWNLOAD_SIGNING_SECRET, payload_part.encode("ascii"), hashlib.sha256).digest()
+    token = f"{payload_part}.{_b64url_encode(signature)}"
+    return f"/api/downloads/{token}", datetime.fromtimestamp(expires_at_ts, tz=timezone.utc).isoformat()
+
+
+def verify_download_token(token: str) -> dict[str, Any]:
+    try:
+        payload_part, signature_part = token.split(".", 1)
+        expected = hmac.new(DOWNLOAD_SIGNING_SECRET, payload_part.encode("ascii"), hashlib.sha256).digest()
+        provided = _b64url_decode(signature_part)
+        if not hmac.compare_digest(expected, provided):
+            raise ValueError("bad signature")
+        payload = json.loads(_b64url_decode(payload_part).decode("utf-8"))
+    except Exception as exc:
+        raise HTTPException(status_code=403, detail=error_detail("INVALID_DOWNLOAD_TOKEN", "Download token is invalid or has been tampered with.", retryable=False)) from exc
+    if int(payload.get("exp", 0)) < int(time.time()):
+        raise HTTPException(status_code=403, detail=error_detail("DOWNLOAD_TOKEN_EXPIRED", "Download token has expired.", retryable=False))
+    if payload.get("purpose") not in {"preview", "download"} or not isinstance(payload.get("path"), str):
+        raise HTTPException(status_code=403, detail=error_detail("INVALID_DOWNLOAD_TOKEN", "Download token payload is invalid.", retryable=False))
+    return payload
+
+
+def resolve_result_file(relative_path: str) -> Path:
+    candidate = (RESULT_DIR / relative_path).resolve()
+    result_root = RESULT_DIR.resolve()
+    if candidate != result_root and result_root not in candidate.parents:
+        raise HTTPException(status_code=403, detail=error_detail("INVALID_DOWNLOAD_PATH", "Download path is outside the result directory.", retryable=False))
+    if not candidate.is_file():
+        raise HTTPException(status_code=404, detail=error_detail("DOWNLOAD_FILE_NOT_FOUND", "Download file was not found or has expired.", retryable=True))
+    return candidate
+
+
 def build_result_file(task_id: str, lane: Literal["official", "ai"], filename: str) -> dict[str, str]:
-    url = task_public_result(task_id, filename)
+    download_url, expires_at = signed_download_url(task_id, filename, "download")
+    preview_url, _ = signed_download_url(task_id, filename, "preview")
     return {
         "fileId": f"file_result_{lane}_{task_id[-6:]}",
-        "previewUrl": url,
-        "downloadUrl": url,
-        "expiresAt": utc_expires_at_seconds(RUNTIME_TTL_SECONDS),
+        "previewUrl": preview_url,
+        "downloadUrl": download_url,
+        "expiresAt": expires_at,
     }
 
 
@@ -231,7 +299,7 @@ def remove_path(path: Path) -> None:
         path.unlink()
 
 
-def cleanup_runtime(now: float | None = None) -> dict[str, int]:
+def cleanup_runtime(now: float | None = None, dry_run: bool = False) -> dict[str, int]:
     now = time.time() if now is None else now
     cutoff = now - RUNTIME_TTL_SECONDS
     removed_uploads = 0
@@ -245,22 +313,25 @@ def cleanup_runtime(now: float | None = None) -> dict[str, int]:
         if upload_id in active_upload_ids:
             continue
         if float(upload.get("createdAt", 0)) < cutoff:
-            remove_path(Path(upload.get("path", "")))
-            UPLOADS.pop(upload_id, None)
+            if not dry_run:
+                remove_path(Path(upload.get("path", "")))
+                UPLOADS.pop(upload_id, None)
             removed_uploads += 1
 
     for upload_file in UPLOAD_DIR.iterdir():
         if upload_file.is_file() and upload_file.stat().st_mtime < cutoff:
             if not any(Path(upload.get("path", "")) == upload_file for upload in UPLOADS.values()):
-                remove_path(upload_file)
+                if not dry_run:
+                    remove_path(upload_file)
                 removed_uploads += 1
 
     for task_id, task in list(TASKS.items()):
         if task.get("status") in {"queued", "processing"}:
             continue
         if float(task.get("createdAt", 0)) < cutoff:
-            remove_path(RESULT_DIR / task_id)
-            TASKS.pop(task_id, None)
+            if not dry_run:
+                remove_path(RESULT_DIR / task_id)
+                TASKS.pop(task_id, None)
             expired_tasks += 1
             removed_results += 1
 
@@ -268,10 +339,11 @@ def cleanup_runtime(now: float | None = None) -> dict[str, int]:
         if result_dir.name in active_task_ids:
             continue
         if result_dir.stat().st_mtime < cutoff and result_dir.name not in TASKS:
-            remove_path(result_dir)
+            if not dry_run:
+                remove_path(result_dir)
             removed_results += 1
 
-    if removed_uploads or removed_results or expired_tasks:
+    if (removed_uploads or removed_results or expired_tasks) and not dry_run:
         if "TASKS_FILE" in globals():
             persist_tasks()
         logger.info("[API] runtime cleanup removed uploads=%s results=%s tasks=%s", removed_uploads, removed_results, expired_tasks)
@@ -489,7 +561,8 @@ class ProcessingTask(BaseModel):
 UPLOADS: dict[str, dict[str, Any]] = {}
 TASKS: dict[str, dict[str, Any]] = {}
 load_tasks()
-cleanup_runtime()
+if os.environ.get("IDPHOTO_SKIP_STARTUP_CLEANUP") != "1":
+    cleanup_runtime()
 
 # 添加 CORS 中间件 解决跨域问题
 app.add_middleware(
@@ -505,7 +578,7 @@ app.add_middleware(
 
 @app.get("/api/health")
 async def api_health():
-    return {"status": "ok", "service": "hivisionidphotos-api", "phase": "4"}
+    return {"status": "ok", "service": "hivisionidphotos-api", "phase": "5B"}
 
 
 @app.get("/api/templates")
@@ -621,6 +694,16 @@ async def api_create_task(payload: TaskCreateRequest, background_tasks: Backgrou
     persist_tasks()
     schedule_idcreator_task(background_tasks, task_id)
     return ProcessingTask(**{key: value for key, value in task.items() if key != "createdAt"})
+
+
+@app.get("/api/downloads/{token}")
+async def api_download_result(token: str):
+    cleanup_runtime()
+    payload = verify_download_token(token)
+    path = resolve_result_file(payload["path"])
+    media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    headers = {"Cache-Control": "private, no-store"}
+    return FileResponse(path, media_type=media_type, filename=path.name if payload.get("purpose") == "download" else None, headers=headers)
 
 
 @app.get("/api/tasks/{task_id}")
