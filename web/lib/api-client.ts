@@ -88,6 +88,40 @@ export interface AuthState {
   username?: string | null;
 }
 
+export interface AdminStats {
+  phase: string;
+  generatedAt: string;
+  today: {
+    logins: number;
+    uploads: number;
+    tasksSucceeded: number;
+    tasksFailed: number;
+    downloads: number;
+    rateLimitHits: number;
+  };
+  last24h: {
+    logins: number;
+    uploads: number;
+    tasksSucceeded: number;
+    tasksFailed: number;
+    downloads: number;
+    rateLimitHits: number;
+  };
+  runtime: {
+    uploadsBytes: number;
+    resultsBytes: number;
+    uploadsTracked: number;
+    tasksTracked: number;
+  };
+  recentErrorCodesTop: { code: string; count: number }[];
+  rateLimits: {
+    uploadsPerMinute: number;
+    tasksPerMinute: number;
+    loginPerMinute: number;
+    storage: string;
+  };
+}
+
 const apiBaseUrl = (process.env.NEXT_PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '');
 const useMockApi = process.env.NEXT_PUBLIC_USE_MOCK_API === 'true' || !apiBaseUrl;
 
@@ -265,6 +299,23 @@ export async function getConfig() {
   }
 
   return requestJson<StudioConfig>('/api/config');
+}
+
+export async function getAdminStats(): Promise<AdminStats> {
+  if (useMockApi) {
+    await wait(80);
+    return {
+      phase: '5D',
+      generatedAt: new Date().toISOString(),
+      today: { logins: 1, uploads: 0, tasksSucceeded: 0, tasksFailed: 0, downloads: 0, rateLimitHits: 0 },
+      last24h: { logins: 1, uploads: 0, tasksSucceeded: 0, tasksFailed: 0, downloads: 0, rateLimitHits: 0 },
+      runtime: { uploadsBytes: 0, resultsBytes: 0, uploadsTracked: 0, tasksTracked: 0 },
+      recentErrorCodesTop: [],
+      rateLimits: { uploadsPerMinute: 10, tasksPerMinute: 10, loginPerMinute: 10, storage: 'in-process' },
+    };
+  }
+
+  return requestJson<AdminStats>('/api/admin/stats');
 }
 
 export async function getTemplates() {

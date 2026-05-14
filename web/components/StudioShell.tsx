@@ -10,7 +10,9 @@ import {
   createTask,
   createUpload,
   getTask,
+  getAdminStats,
   templates,
+  type AdminStats,
   type BackgroundColor,
   type ProcessingTask,
   type UploadHandle,
@@ -21,6 +23,37 @@ function StatusPill({ children }: { children: React.ReactNode }) {
     <span className="rounded-full border border-measurement/25 bg-measurement/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] text-measurement">
       {children}
     </span>
+  );
+}
+
+function formatBytes(value: number) {
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function AdminStatusPanel({ stats, onRefresh }: { stats: AdminStats | null; onRefresh: () => void }) {
+  return (
+    <div className="mt-5 rounded-2xl border border-ink/10 bg-porcelain/70 p-4 text-xs leading-5 text-slate">
+      <div className="flex items-center justify-between gap-3">
+        <p className="font-mono text-[11px] font-bold uppercase tracking-[0.22em] text-graphite">Admin stats</p>
+        <button type="button" onClick={onRefresh} className="rounded-full border border-ink/15 px-3 py-1 font-semibold uppercase tracking-[0.16em] text-graphite transition hover:border-ink/35">Refresh</button>
+      </div>
+      {stats ? (
+        <dl className="mt-3 grid grid-cols-2 gap-2">
+          <div><dt>Phase</dt><dd className="font-mono text-ink">{stats.phase}</dd></div>
+          <div><dt>24h logins</dt><dd className="font-mono text-ink">{stats.last24h.logins}</dd></div>
+          <div><dt>24h uploads</dt><dd className="font-mono text-ink">{stats.last24h.uploads}</dd></div>
+          <div><dt>Tasks ok/fail</dt><dd className="font-mono text-ink">{stats.last24h.tasksSucceeded}/{stats.last24h.tasksFailed}</dd></div>
+          <div><dt>Downloads</dt><dd className="font-mono text-ink">{stats.last24h.downloads}</dd></div>
+          <div><dt>Rate hits</dt><dd className="font-mono text-ink">{stats.last24h.rateLimitHits}</dd></div>
+          <div><dt>Uploads disk</dt><dd className="font-mono text-ink">{formatBytes(stats.runtime.uploadsBytes)}</dd></div>
+          <div><dt>Results disk</dt><dd className="font-mono text-ink">{formatBytes(stats.runtime.resultsBytes)}</dd></div>
+        </dl>
+      ) : (
+        <p className="mt-3">Stats load after login. API: /api/admin/stats</p>
+      )}
+    </div>
   );
 }
 
@@ -70,8 +103,21 @@ export default function StudioShell({ username, onLogout }: { username?: string 
   const [aiPreview, setAiPreview] = useState(false);
   const [busy, setBusy] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [adminStats, setAdminStats] = useState<AdminStats | null>(null);
 
   const template = useMemo(() => templates.find((item) => item.templateId === selectedTemplate), [selectedTemplate]);
+
+  async function refreshAdminStats() {
+    try {
+      setAdminStats(await getAdminStats());
+    } catch {
+      // Keep the studio usable even if the admin endpoint is temporarily unavailable.
+    }
+  }
+
+  useEffect(() => {
+    void refreshAdminStats();
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -92,6 +138,7 @@ export default function StudioShell({ username, onLogout }: { username?: string 
     try {
       const nextUpload = await createUpload(nextFile);
       setUpload(nextUpload);
+      void refreshAdminStats();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Upload failed.');
     } finally {
@@ -128,6 +175,7 @@ export default function StudioShell({ username, onLogout }: { username?: string 
       if (polledTask.status === 'failed' || polledTask.status === 'expired') {
         setErrorMessage(polledTask.error?.message ?? `Task ${polledTask.status}.`);
       }
+      void refreshAdminStats();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Task creation failed.');
       setBusy(false);
@@ -157,7 +205,7 @@ export default function StudioShell({ username, onLogout }: { username?: string 
                     Logout
                   </button>
                 ) : null}
-                <StatusPill>Phase 5C</StatusPill>
+                <StatusPill>Phase 5D</StatusPill>
               </div>
             </div>
 
@@ -208,6 +256,8 @@ export default function StudioShell({ username, onLogout }: { username?: string 
             <div className="mt-5 rounded-2xl border border-ink/10 bg-porcelain/70 p-4 text-xs leading-5 text-slate">
               Privacy note: uploads accept JPG/PNG/WebP only, are size-limited, and expire automatically with generated results.
             </div>
+
+            <AdminStatusPanel stats={adminStats} onRefresh={() => void refreshAdminStats()} />
 
             <div className="mt-5">
               <ResultPanel task={task} template={template} selectedBackground={selectedBackground} sourcePreviewUrl={previewUrl} />

@@ -5,6 +5,7 @@ import hmac
 import json
 import mimetypes
 import os
+from collections import Counter, defaultdict, deque
 from fastapi import FastAPI, UploadFile, Form, File, HTTPException, BackgroundTasks, Depends, Request, Response
 from fastapi.responses import FileResponse
 import logging
@@ -52,6 +53,11 @@ APP_PASSWORD = os.environ.get("IDPHOTO_APP_PASSWORD", "")
 APP_SESSION_SECRET_RAW = os.environ.get("IDPHOTO_APP_SESSION_SECRET", "")
 APP_SESSION_COOKIE = "idphoto_ai_session"
 APP_SESSION_TTL_SECONDS = int(os.environ.get("IDPHOTO_APP_SESSION_TTL_SECONDS", str(12 * 60 * 60)))
+RATE_LIMIT_UPLOADS_PER_MINUTE = int(os.environ.get("IDPHOTO_RATE_LIMIT_UPLOADS_PER_MINUTE", "10"))
+RATE_LIMIT_TASKS_PER_MINUTE = int(os.environ.get("IDPHOTO_RATE_LIMIT_TASKS_PER_MINUTE", "10"))
+RATE_LIMIT_LOGIN_PER_MINUTE = int(os.environ.get("IDPHOTO_RATE_LIMIT_LOGIN_PER_MINUTE", "10"))
+AUDIT_IP_HASH_SECRET = os.environ.get("IDPHOTO_AUDIT_IP_HASH_SECRET") or APP_SESSION_SECRET_RAW or "idphoto-ai-audit-local"
+SERVICE_PHASE = "5D"
 ALLOWED_UPLOAD_TYPES: dict[str, set[str]] = {
     "image/jpeg": {".jpg", ".jpeg"},
     "image/png": {".png"},
@@ -120,6 +126,176 @@ def error_detail(code: str, message: str, retryable: bool = True, trace_id: str 
     if trace_id:
         error["traceId"] = trace_id
     return {"error": error}
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def request_id(request: Request | None = None) -> str:
+    if request:
+        incoming = request.headers.get("x-request-id") or request.headers.get("x-correlation-id")
+        if incoming:
+            return incoming[:80]
+    return f"req_{uuid.uuid4().hex[:12]}"
+
+
+def client_ip(request: Request | None) -> str:
+    if not request:
+        return "unknown"
+    forwarded = request.headers.get("x-forwarded-for", "").split(",", 1)[0].strip()
+    return forwarded or (request.client.host if request.client else "unknown")
+
+
+def hash_ip(ip: str) -> str:
+    digest = hmac.new(AUDIT_IP_HASH_SECRET.encode("utf-8"), ip.encode("utf-8"), hashlib.sha256).hexdigest()
+    return f"iphash_{digest[:16]}"
+
+
+def session_fingerprint(request: Request | None) -> str:
+    token = request.cookies.get(APP_SESSION_COOKIE) if request else None
+    if not token:
+        return "anonymous"
+    digest = hmac.new(APP_SESSION_SECRET, token.encode("utf-8"), hashlib.sha256).hexdigest()
+    return f"sess_{digest[:16]}"
+
+
+def audit_user(session: dict[str, Any] | None = None, username: str | None = None) -> str | None:
+    value = username or (str(session.get("sub")) if session else None)
+    return value if value else None
+
+
+def safe_error_code(exc: Exception | None) -> str | None:
+    if not exc:
+        return None
+    if isinstance(exc, HTTPException):
+        detail = exc.detail if isinstance(exc.detail, dict) else {}
+        error = detail.get("error") if isinstance(detail.get("error"), dict) else {}
+        code = error.get("code")
+        return str(code) if code else f"HTTP_{exc.status_code}"
+    return exc.__class__.__name__
+
+
+def log_event(event: str, request: Request | None = None, *, status: str = "ok", user: str | None = None, session: dict[str, Any] | None = None, route: str | None = None, request_id_value: str | None = None, task_id: str | None = None, upload_id: str | None = None, duration_ms: int | None = None, error_code: str | None = None, extra: dict[str, Any] | None = None) -> None:
+    record: dict[str, Any] = {
+        "ts": now_iso(),
+        "event": event,
+        "status": status,
+        "requestId": request_id_value or request_id(request),
+        "route": route or (request.url.path if request else None),
+        "ipHash": hash_ip(client_ip(request)),
+        "sessionHash": session_fingerprint(request),
+    }
+    if audit_user(session, user):
+        record["user"] = audit_user(session, user)
+    if task_id:
+        record["taskId"] = task_id
+    if upload_id:
+        record["uploadId"] = upload_id
+    if duration_ms is not None:
+        record["durationMs"] = duration_ms
+    if error_code:
+        record["errorCode"] = error_code
+    if extra:
+        for key, value in extra.items():
+            if key not in {"password", "cookie", "authorization", "token", "url", "filename", "path"}:
+                record[key] = value
+    try:
+        AUDIT_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with AUDIT_LOG_FILE.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps({k: v for k, v in record.items() if v is not None}, ensure_ascii=False, separators=(",", ":")) + "\n")
+    except Exception:
+        logger.exception("[API] failed to write audit event")
+
+
+def rate_limit_key(request: Request, scope: str) -> tuple[str, str]:
+    return (scope, f"{hash_ip(client_ip(request))}:{session_fingerprint(request)}")
+
+
+def check_rate_limit(request: Request, scope: Literal["login", "upload", "task"], limit: int) -> None:
+    if limit <= 0:
+        return
+    now = time.time()
+    bucket = RATE_LIMITS[rate_limit_key(request, scope)]
+    while bucket and bucket[0] <= now - RATE_LIMIT_WINDOW_SECONDS:
+        bucket.popleft()
+    if len(bucket) >= limit:
+        log_event("rate_limit_hit", request, status="blocked", route=request.url.path, error_code="RATE_LIMITED", extra={"scope": scope, "limit": limit, "windowSeconds": RATE_LIMIT_WINDOW_SECONDS})
+        raise HTTPException(status_code=429, detail=error_detail("RATE_LIMITED", "Too many requests. Please retry later.", retryable=True))
+    bucket.append(now)
+
+
+def directory_size_bytes(path: Path) -> int:
+    if not path.exists():
+        return 0
+    total = 0
+    for item in path.rglob("*"):
+        if item.is_file():
+            try:
+                total += item.stat().st_size
+            except OSError:
+                continue
+    return total
+
+
+def iter_audit_events(since: float | None = None):
+    if not AUDIT_LOG_FILE.exists():
+        return
+    with AUDIT_LOG_FILE.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            try:
+                event = json.loads(line)
+                if since is not None:
+                    ts = datetime.fromisoformat(str(event.get("ts", "")).replace("Z", "+00:00")).timestamp()
+                    if ts < since:
+                        continue
+                yield event
+            except Exception:
+                continue
+
+
+def build_admin_stats() -> dict[str, Any]:
+    now_ts = time.time()
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    events_24h = list(iter_audit_events(now_ts - 24 * 60 * 60) or [])
+    today_events = [event for event in events_24h if datetime.fromisoformat(str(event.get("ts", "")).replace("Z", "+00:00")).timestamp() >= today_start]
+
+    def count(events: list[dict[str, Any]], name: str, status: str | None = None) -> int:
+        return sum(1 for event in events if event.get("event") == name and (status is None or event.get("status") == status))
+
+    error_codes = Counter(str(event.get("errorCode")) for event in events_24h if event.get("errorCode"))
+    return {
+        "phase": SERVICE_PHASE,
+        "generatedAt": now_iso(),
+        "today": {
+            "logins": count(today_events, "login", "success"),
+            "uploads": count(today_events, "upload", "success"),
+            "tasksSucceeded": count(today_events, "task_complete", "success"),
+            "tasksFailed": count(today_events, "task_complete", "failure"),
+            "downloads": count(today_events, "download", "success"),
+            "rateLimitHits": count(today_events, "rate_limit_hit"),
+        },
+        "last24h": {
+            "logins": count(events_24h, "login", "success"),
+            "uploads": count(events_24h, "upload", "success"),
+            "tasksSucceeded": count(events_24h, "task_complete", "success"),
+            "tasksFailed": count(events_24h, "task_complete", "failure"),
+            "downloads": count(events_24h, "download", "success"),
+            "rateLimitHits": count(events_24h, "rate_limit_hit"),
+        },
+        "runtime": {
+            "uploadsBytes": directory_size_bytes(UPLOAD_DIR),
+            "resultsBytes": directory_size_bytes(RESULT_DIR),
+            "uploadsTracked": len(UPLOADS),
+            "tasksTracked": len(TASKS),
+        },
+        "recentErrorCodesTop": [{"code": code, "count": value} for code, value in error_codes.most_common(8)],
+        "rateLimits": {
+            "uploadsPerMinute": RATE_LIMIT_UPLOADS_PER_MINUTE,
+            "tasksPerMinute": RATE_LIMIT_TASKS_PER_MINUTE,
+            "loginPerMinute": RATE_LIMIT_LOGIN_PER_MINUTE,
+            "storage": "in-process",
+        },
+    }
 
 
 def safe_suffix(filename: str | None, content_type: str | None) -> str:
@@ -229,6 +405,9 @@ BACKGROUND_LABELS: dict[str, str] = {
 }
 
 TASKS_FILE = RUNTIME_DIR / "tasks.json"
+AUDIT_LOG_FILE = RUNTIME_DIR / "audit.jsonl"
+RATE_LIMIT_WINDOW_SECONDS = 60
+RATE_LIMITS: dict[tuple[str, str], deque[float]] = defaultdict(deque)
 executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="idcreator-task")
 
 
@@ -535,6 +714,7 @@ def run_idcreator_task(task_id: str) -> None:
     task = TASKS[task_id]
     task["status"] = "processing"
     persist_tasks()
+    started = time.time()
 
     try:
         upload = UPLOADS.get(task["uploadId"])
@@ -598,6 +778,16 @@ def run_idcreator_task(task_id: str) -> None:
         }
     finally:
         persist_tasks()
+        log_event(
+            "task_complete",
+            None,
+            status="success" if task.get("status") == "succeeded" else "failure",
+            task_id=task_id,
+            upload_id=task.get("uploadId"),
+            duration_ms=int((time.time() - started) * 1000),
+            error_code=(task.get("error") or {}).get("code") if task.get("status") == "failed" else None,
+            extra={"templateId": task.get("templateId"), "aiMode": task.get("aiMode")},
+        )
 
 
 def schedule_idcreator_task(background_tasks: BackgroundTasks, task_id: str) -> None:
@@ -657,16 +847,21 @@ app.add_middleware(
 
 @app.get("/api/health")
 async def api_health():
-    return {"status": "ok", "service": "hivisionidphotos-api", "phase": "5C"}
+    return {"status": "ok", "service": "hivisionidphotos-api", "phase": SERVICE_PHASE}
 
 
 @app.post("/api/auth/login")
-async def api_auth_login(payload: LoginRequest, response: Response):
+async def api_auth_login(payload: LoginRequest, response: Response, request: Request):
+    check_rate_limit(request, "login", RATE_LIMIT_LOGIN_PER_MINUTE)
+    started = time.time()
     if not auth_is_configured():
+        log_event("login", request, status="failure", user=payload.username, duration_ms=int((time.time() - started) * 1000), error_code="AUTH_NOT_CONFIGURED")
         raise HTTPException(status_code=503, detail=error_detail("AUTH_NOT_CONFIGURED", "Application login is not configured.", retryable=False))
     if not (hmac.compare_digest(payload.username, APP_USERNAME) and hmac.compare_digest(payload.password, APP_PASSWORD)):
+        log_event("login", request, status="failure", user=payload.username, duration_ms=int((time.time() - started) * 1000), error_code="INVALID_CREDENTIALS")
         raise HTTPException(status_code=401, detail=error_detail("INVALID_CREDENTIALS", "Username or password is incorrect.", retryable=False))
     set_session_cookie(response, APP_USERNAME)
+    log_event("login", request, status="success", user=APP_USERNAME, duration_ms=int((time.time() - started) * 1000))
     return {"authenticated": True, "username": APP_USERNAME}
 
 
@@ -677,9 +872,16 @@ async def api_auth_me(request: Request):
 
 
 @app.post("/api/auth/logout")
-async def api_auth_logout(response: Response):
+async def api_auth_logout(response: Response, request: Request):
+    session = verify_session_token(request.cookies.get(APP_SESSION_COOKIE))
+    log_event("logout", request, status="success", session=session)
     clear_session_cookie(response)
     return {"authenticated": False}
+
+
+@app.get("/api/admin/stats")
+async def api_admin_stats(_session: dict[str, Any] = Depends(require_auth)):
+    return build_admin_stats()
 
 
 @app.get("/api/templates")
@@ -728,83 +930,117 @@ async def api_config(_session: dict[str, Any] = Depends(require_auth)):
 
 
 @app.post("/api/uploads")
-async def api_create_upload(file: UploadFile = File(...), _session: dict[str, Any] = Depends(require_auth)):
-    cleanup_runtime()
-    content_type = validate_upload_metadata(file.filename, file.content_type)
-    content = await file.read()
-    validate_upload_bytes(content, content_type)
+async def api_create_upload(request: Request, file: UploadFile = File(...), _session: dict[str, Any] = Depends(require_auth)):
+    check_rate_limit(request, "upload", RATE_LIMIT_UPLOADS_PER_MINUTE)
+    started = time.time()
+    upload_id: str | None = None
+    try:
+        cleanup_runtime()
+        content_type = validate_upload_metadata(file.filename, file.content_type)
+        content = await file.read()
+        validate_upload_bytes(content, content_type)
 
-    upload_id = f"upl_{uuid.uuid4().hex[:12]}"
-    file_id = f"file_source_{uuid.uuid4().hex[:12]}"
-    stored_name = f"{upload_id}{safe_suffix(file.filename, content_type)}"
-    stored_path = UPLOAD_DIR / stored_name
+        upload_id = f"upl_{uuid.uuid4().hex[:12]}"
+        file_id = f"file_source_{uuid.uuid4().hex[:12]}"
+        stored_name = f"{upload_id}{safe_suffix(file.filename, content_type)}"
+        stored_path = UPLOAD_DIR / stored_name
 
-    stored_path.write_bytes(content)
+        stored_path.write_bytes(content)
 
-    expires_at = utc_expires_at_seconds(RUNTIME_TTL_SECONDS)
-    UPLOADS[upload_id] = {
-        "uploadId": upload_id,
-        "fileId": file_id,
-        "filename": file.filename or stored_name,
-        "storedName": stored_name,
-        "mimeType": content_type,
-        "path": str(stored_path),
-        "url": public_runtime_url("uploads", stored_name),
-        "expiresAt": expires_at,
-        "createdAt": time.time(),
-    }
+        expires_at = utc_expires_at_seconds(RUNTIME_TTL_SECONDS)
+        UPLOADS[upload_id] = {
+            "uploadId": upload_id,
+            "fileId": file_id,
+            "filename": file.filename or stored_name,
+            "storedName": stored_name,
+            "mimeType": content_type,
+            "path": str(stored_path),
+            "url": public_runtime_url("uploads", stored_name),
+            "expiresAt": expires_at,
+            "createdAt": time.time(),
+        }
 
-    return {
-        "uploadId": upload_id,
-        "fileId": file_id,
-        "filename": file.filename or stored_name,
-        "mimeType": content_type,
-        "url": public_runtime_url("uploads", stored_name),
-        "expiresAt": expires_at,
-    }
+        log_event("upload", request, status="success", session=_session, upload_id=upload_id, duration_ms=int((time.time() - started) * 1000), extra={"mimeType": content_type, "bytes": len(content)})
+        return {
+            "uploadId": upload_id,
+            "fileId": file_id,
+            "filename": file.filename or stored_name,
+            "mimeType": content_type,
+            "url": public_runtime_url("uploads", stored_name),
+            "expiresAt": expires_at,
+        }
+    except HTTPException as exc:
+        log_event("upload", request, status="failure", session=_session, upload_id=upload_id, duration_ms=int((time.time() - started) * 1000), error_code=safe_error_code(exc))
+        raise
+    except Exception as exc:
+        log_event("upload", request, status="failure", session=_session, upload_id=upload_id, duration_ms=int((time.time() - started) * 1000), error_code=exc.__class__.__name__)
+        raise
 
 
 @app.post("/api/tasks")
-async def api_create_task(payload: TaskCreateRequest, background_tasks: BackgroundTasks, _session: dict[str, Any] = Depends(require_auth)):
-    cleanup_runtime()
-    if payload.uploadId not in UPLOADS:
-        raise HTTPException(status_code=404, detail=error_detail("UPLOAD_NOT_FOUND", "Upload handle was not found or has expired.", retryable=True))
+async def api_create_task(request: Request, payload: TaskCreateRequest, background_tasks: BackgroundTasks, _session: dict[str, Any] = Depends(require_auth)):
+    check_rate_limit(request, "task", RATE_LIMIT_TASKS_PER_MINUTE)
+    started = time.time()
+    task_id: str | None = None
+    try:
+        cleanup_runtime()
+        if payload.uploadId not in UPLOADS:
+            raise HTTPException(status_code=404, detail=error_detail("UPLOAD_NOT_FOUND", "Upload handle was not found or has expired.", retryable=True))
 
-    template_id = validate_template_id(payload.templateId)
-    background = validate_background(payload.options.get("background", DEFAULT_BACKGROUND))
-    task_id = f"task_{uuid.uuid4().hex[:12]}"
-    render_ai = bool(payload.options.get("renderAiEnhancePreview", False)) or payload.aiMode in {"preview", "enhance"}
-    task_options = dict(payload.options)
-    task_options.update({
-        "background": background,
-        "renderOfficialIdPhoto": True,
-        "renderAiEnhancePreview": render_ai,
-        "aiEnhancePreviewKind": "local-derived-preview" if render_ai else "none",
-    })
-    task = {
-        "taskId": task_id,
-        "status": "queued",
-        "uploadId": payload.uploadId,
-        "templateId": template_id,
-        "platform": payload.platform,
-        "aiMode": payload.aiMode,
-        "options": task_options,
-        "createdAt": time.time(),
-    }
-    TASKS[task_id] = task
-    persist_tasks()
-    schedule_idcreator_task(background_tasks, task_id)
-    return ProcessingTask(**{key: value for key, value in task.items() if key != "createdAt"})
+        template_id = validate_template_id(payload.templateId)
+        background = validate_background(payload.options.get("background", DEFAULT_BACKGROUND))
+        task_id = f"task_{uuid.uuid4().hex[:12]}"
+        render_ai = bool(payload.options.get("renderAiEnhancePreview", False)) or payload.aiMode in {"preview", "enhance"}
+        task_options = dict(payload.options)
+        task_options.update({
+            "background": background,
+            "renderOfficialIdPhoto": True,
+            "renderAiEnhancePreview": render_ai,
+            "aiEnhancePreviewKind": "local-derived-preview" if render_ai else "none",
+        })
+        task = {
+            "taskId": task_id,
+            "status": "queued",
+            "uploadId": payload.uploadId,
+            "templateId": template_id,
+            "platform": payload.platform,
+            "aiMode": payload.aiMode,
+            "options": task_options,
+            "createdAt": time.time(),
+        }
+        TASKS[task_id] = task
+        persist_tasks()
+        log_event("task_create", request, status="success", session=_session, task_id=task_id, upload_id=payload.uploadId, duration_ms=int((time.time() - started) * 1000), extra={"templateId": template_id, "aiMode": payload.aiMode})
+        schedule_idcreator_task(background_tasks, task_id)
+        return ProcessingTask(**{key: value for key, value in task.items() if key != "createdAt"})
+    except HTTPException as exc:
+        log_event("task_create", request, status="failure", session=_session, task_id=task_id, upload_id=payload.uploadId, duration_ms=int((time.time() - started) * 1000), error_code=safe_error_code(exc))
+        raise
+    except Exception as exc:
+        log_event("task_create", request, status="failure", session=_session, task_id=task_id, upload_id=payload.uploadId, duration_ms=int((time.time() - started) * 1000), error_code=exc.__class__.__name__)
+        raise
 
 
 @app.get("/api/downloads/{token}")
-async def api_download_result(token: str, _session: dict[str, Any] = Depends(require_auth)):
-    cleanup_runtime()
-    payload = verify_download_token(token)
-    path = resolve_result_file(payload["path"])
-    media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
-    headers = {"Cache-Control": "private, no-store"}
-    return FileResponse(path, media_type=media_type, filename=path.name if payload.get("purpose") == "download" else None, headers=headers)
+async def api_download_result(request: Request, token: str, _session: dict[str, Any] = Depends(require_auth)):
+    started = time.time()
+    task_id: str | None = None
+    try:
+        cleanup_runtime()
+        payload = verify_download_token(token)
+        relative_path = str(payload["path"])
+        task_id = relative_path.split("/", 1)[0] if "/" in relative_path else None
+        path = resolve_result_file(relative_path)
+        media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        headers = {"Cache-Control": "private, no-store"}
+        log_event("download", request, status="success", session=_session, task_id=task_id, duration_ms=int((time.time() - started) * 1000), extra={"purpose": payload.get("purpose"), "bytes": path.stat().st_size})
+        return FileResponse(path, media_type=media_type, filename=path.name if payload.get("purpose") == "download" else None, headers=headers)
+    except HTTPException as exc:
+        log_event("download", request, status="failure", session=_session, task_id=task_id, duration_ms=int((time.time() - started) * 1000), error_code=safe_error_code(exc))
+        raise
+    except Exception as exc:
+        log_event("download", request, status="failure", session=_session, task_id=task_id, duration_ms=int((time.time() - started) * 1000), error_code=exc.__class__.__name__)
+        raise
 
 
 @app.get("/api/tasks/{task_id}")

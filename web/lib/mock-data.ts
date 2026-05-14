@@ -40,4 +40,5 @@ export const apiCards = [
   ['GET', '/api/tasks/{id}', 'Poll queued/processing/succeeded/failed/expired'],
   ['GET', '/api/templates', 'Shared ID photo specifications'],
   ['GET', '/api/health', 'Service health and version'],
+  ['GET', '/api/admin/stats', 'Authenticated observability summary'],
 ] as const;
