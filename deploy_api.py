@@ -181,7 +181,7 @@ def log_event(event: str, request: Request | None = None, *, status: str = "ok",
         "event": event,
         "status": status,
         "requestId": request_id_value or request_id(request),
-        "route": route or (request.url.path if request else None),
+        "route": route or (getattr(request, "scope", {}).get("route").path if request and getattr(request, "scope", {}).get("route") else (request.url.path if request else None)),
         "ipHash": hash_ip(client_ip(request)),
         "sessionHash": session_fingerprint(request),
     }
@@ -1033,13 +1033,13 @@ async def api_download_result(request: Request, token: str, _session: dict[str, 
         path = resolve_result_file(relative_path)
         media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
         headers = {"Cache-Control": "private, no-store"}
-        log_event("download", request, status="success", session=_session, task_id=task_id, duration_ms=int((time.time() - started) * 1000), extra={"purpose": payload.get("purpose"), "bytes": path.stat().st_size})
+        log_event("download", request, status="success", session=_session, route="/api/downloads/{token}", task_id=task_id, duration_ms=int((time.time() - started) * 1000), extra={"purpose": payload.get("purpose"), "bytes": path.stat().st_size})
         return FileResponse(path, media_type=media_type, filename=path.name if payload.get("purpose") == "download" else None, headers=headers)
     except HTTPException as exc:
-        log_event("download", request, status="failure", session=_session, task_id=task_id, duration_ms=int((time.time() - started) * 1000), error_code=safe_error_code(exc))
+        log_event("download", request, status="failure", session=_session, route="/api/downloads/{token}", task_id=task_id, duration_ms=int((time.time() - started) * 1000), error_code=safe_error_code(exc))
         raise
     except Exception as exc:
-        log_event("download", request, status="failure", session=_session, task_id=task_id, duration_ms=int((time.time() - started) * 1000), error_code=exc.__class__.__name__)
+        log_event("download", request, status="failure", session=_session, route="/api/downloads/{token}", task_id=task_id, duration_ms=int((time.time() - started) * 1000), error_code=exc.__class__.__name__)
         raise
 
 
