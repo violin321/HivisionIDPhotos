@@ -1,0 +1,24 @@
+module.exports = {
+  apps: [
+    {
+      name: 'idphoto-ai-api',
+      cwd: '/root/.openclaw/workspace-programmer/HivisionIDPhotos',
+      script: '/root/.openclaw/workspace-programmer/HivisionIDPhotos/.venv/bin/uvicorn',
+      args: 'deploy_api:app --host 127.0.0.1 --port 18084',
+      interpreter: 'none',
+      env: {
+        PYTHONUNBUFFERED: '1'
+      }
+    },
+    {
+      name: 'idphoto-ai-web',
+      cwd: '/root/.openclaw/workspace-programmer/HivisionIDPhotos/web',
+      script: 'npm',
+      args: 'run start -- --hostname 127.0.0.1 --port 18083',
+      env: {
+        NODE_ENV: 'production',
+        NEXT_PUBLIC_API_BASE_URL: '/api'
+      }
+    }
+  ]
+}
