@@ -38,7 +38,7 @@ function HeroPlate({ previewUrl, background }: { previewUrl: string | null; back
         <div className="ruler-edge h-full opacity-70" />
       </div>
       <div className="absolute -right-5 bottom-8 rounded-full border border-amber/40 bg-amber/10 px-3 py-2 text-[10px] font-bold uppercase tracking-[0.22em] text-amber">
-        mock
+        phase 2.5
       </div>
       <div className="h-full rounded-[22px] border border-ink/10 bg-porcelain p-4">
         <div className={`relative h-full overflow-hidden rounded-[18px] bg-gradient-to-b ${backgroundTone}`}>
@@ -109,10 +109,14 @@ export default function StudioShell() {
     setTask(nextTask);
     setBusy(false);
 
-    const processingTask = await getTask(nextTask, 1);
-    setTask(processingTask);
-    const succeededTask = await getTask(processingTask, 2);
-    setTask(succeededTask);
+    const firstPollTask = await getTask(nextTask, 1);
+    setTask(firstPollTask);
+    const secondPollTask = await getTask(firstPollTask, 2);
+    setTask(secondPollTask);
+    if (secondPollTask.status !== 'succeeded') {
+      const finalPollTask = await getTask(secondPollTask, 3);
+      setTask(finalPollTask);
+    }
   }
 
   return (
@@ -127,7 +131,7 @@ export default function StudioShell() {
                   Precision Studio
                 </h1>
               </div>
-              <StatusPill>Phase 2</StatusPill>
+              <StatusPill>Phase 2.5</StatusPill>
             </div>
 
             <div className="grid gap-8 lg:grid-cols-[1fr_240px]">

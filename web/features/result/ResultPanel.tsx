@@ -51,7 +51,7 @@ export function ResultPanel({ task, template, selectedBackground, sourcePreviewU
         <div className="flex flex-col justify-between">
           <div>
             <p className="text-sm leading-6 text-slate">
-              Mock preview uses a local browser image; production will return expiring URLs compatible with wx.previewImage, wx.downloadFile, and web download flows.
+              Phase 2.5 returns expiring result URLs from the API adapter; mock fallback remains available when no backend base URL is configured.
             </p>
             <dl className="mt-5 grid gap-3 text-sm sm:grid-cols-2">
               <div className="rounded-2xl border border-ink/10 bg-paper/60 p-3"><dt className="text-slate">Spec</dt><dd className="mt-1 font-semibold">{template?.label ?? '—'} · {template?.size ?? '—'}</dd></div>
@@ -71,7 +71,7 @@ export function ResultPanel({ task, template, selectedBackground, sourcePreviewU
       <div className="mt-5 rounded-[20px] border border-ink/10 bg-ink p-4 text-porcelain">
         <p className="font-mono text-[10px] uppercase tracking-[0.26em] text-[#b7c9cc]">AI Enhance lane</p>
         <p className="mt-2 text-sm leading-6 text-[#d8d1c4]">
-          Optional preview remains disabled in Phase 2. It will never replace this official result card or expose provider keys/base URLs in the client.
+          Optional preview stays in a separate AI lane. It will never replace this official result card or expose provider keys/base URLs in the client.
         </p>
       </div>
     </section>

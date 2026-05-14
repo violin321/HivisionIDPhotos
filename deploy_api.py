@@ -1,5 +1,12 @@
-from fastapi import FastAPI, UploadFile, Form, File
+from fastapi import FastAPI, UploadFile, Form, File, HTTPException
 import logging
+import shutil
+import time
+import uuid
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any, Literal
+
 from hivision import IDCreator
 from hivision.error import FaceError
 from hivision.creator.layout_calculator import (
@@ -20,7 +27,9 @@ from hivision.utils import (
 )
 import numpy as np
 import cv2
+from pydantic import BaseModel, Field
 from starlette.middleware.cors import CORSMiddleware
+from starlette.staticfiles import StaticFiles
 from starlette.formparsers import MultiPartParser
 
 # 设置Starlette表单字段大小限制
@@ -34,6 +43,81 @@ app = FastAPI()
 creator = IDCreator()
 ai_enhance_service = AIEnhanceService()
 
+RUNTIME_DIR = Path(__file__).resolve().parent / ".runtime"
+UPLOAD_DIR = RUNTIME_DIR / "uploads"
+RESULT_DIR = RUNTIME_DIR / "results"
+for runtime_path in (UPLOAD_DIR, RESULT_DIR):
+    runtime_path.mkdir(parents=True, exist_ok=True)
+
+app.mount("/runtime/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="runtime_uploads")
+app.mount("/runtime/results", StaticFiles(directory=str(RESULT_DIR)), name="runtime_results")
+
+TaskStatus = Literal["queued", "processing", "succeeded", "failed", "expired"]
+Platform = Literal["web", "mobileWeb", "wechatMiniapp"]
+AiMode = Literal["none", "preview", "enhance"]
+
+
+def utc_expires_at(minutes: int) -> str:
+    return (datetime.now(timezone.utc) + timedelta(minutes=minutes)).isoformat()
+
+
+def public_runtime_url(kind: Literal["uploads", "results"], filename: str) -> str:
+    return f"/runtime/{kind}/{filename}"
+
+
+def safe_suffix(filename: str | None, content_type: str | None) -> str:
+    suffix = Path(filename or "").suffix.lower()
+    if suffix in {".jpg", ".jpeg", ".png", ".webp"}:
+        return suffix
+    if content_type == "image/png":
+        return ".png"
+    if content_type == "image/webp":
+        return ".webp"
+    return ".jpg"
+
+
+def copy_upload_to_result(upload_id: str, task_id: str, lane: Literal["official", "ai"]) -> str:
+    upload = UPLOADS.get(upload_id)
+    if not upload:
+        raise KeyError(upload_id)
+    source = Path(upload["path"])
+    filename = f"{task_id}_{lane}{source.suffix or '.jpg'}"
+    target = RESULT_DIR / filename
+    shutil.copyfile(source, target)
+    return filename
+
+
+class ResultFile(BaseModel):
+    fileId: str
+    previewUrl: str
+    downloadUrl: str
+    expiresAt: str
+
+
+class TaskCreateRequest(BaseModel):
+    uploadId: str
+    templateId: str
+    platform: Platform = "web"
+    aiMode: AiMode = "none"
+    options: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProcessingTask(BaseModel):
+    taskId: str
+    status: TaskStatus
+    uploadId: str
+    templateId: str
+    platform: Platform
+    aiMode: AiMode
+    options: dict[str, Any]
+    officialResult: ResultFile | None = None
+    aiEnhanceResult: ResultFile | None = None
+    error: dict[str, Any] | None = None
+
+
+UPLOADS: dict[str, dict[str, Any]] = {}
+TASKS: dict[str, dict[str, Any]] = {}
+
 # 添加 CORS 中间件 解决跨域问题
 app.add_middleware(
     CORSMiddleware,
@@ -44,6 +128,106 @@ app.add_middleware(
     ],  # 允许的请求方法，例如：GET, POST 等，也可以指定 ["GET", "POST"]
     allow_headers=["*"],  # 允许的请求头，也可以指定具体的头部
 )
+
+
+@app.get("/api/health")
+async def api_health():
+    return {"status": "ok", "service": "hivisionidphotos-api", "phase": "2.5"}
+
+
+@app.post("/api/uploads")
+async def api_create_upload(file: UploadFile = File(...)):
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail={"error": {"code": "INVALID_FILE_TYPE", "message": "Only image uploads are supported.", "retryable": True}})
+
+    upload_id = f"upl_{uuid.uuid4().hex[:12]}"
+    file_id = f"file_source_{uuid.uuid4().hex[:12]}"
+    stored_name = f"{upload_id}{safe_suffix(file.filename, file.content_type)}"
+    stored_path = UPLOAD_DIR / stored_name
+
+    with stored_path.open("wb") as output:
+        shutil.copyfileobj(file.file, output)
+
+    expires_at = utc_expires_at(24 * 60)
+    UPLOADS[upload_id] = {
+        "uploadId": upload_id,
+        "fileId": file_id,
+        "filename": file.filename or stored_name,
+        "storedName": stored_name,
+        "mimeType": file.content_type,
+        "path": str(stored_path),
+        "url": public_runtime_url("uploads", stored_name),
+        "expiresAt": expires_at,
+        "createdAt": time.time(),
+    }
+
+    return {
+        "uploadId": upload_id,
+        "fileId": file_id,
+        "filename": file.filename or stored_name,
+        "mimeType": file.content_type,
+        "url": public_runtime_url("uploads", stored_name),
+        "expiresAt": expires_at,
+    }
+
+
+@app.post("/api/tasks")
+async def api_create_task(payload: TaskCreateRequest):
+    if payload.uploadId not in UPLOADS:
+        raise HTTPException(status_code=404, detail={"error": {"code": "UPLOAD_NOT_FOUND", "message": "Upload handle was not found or has expired.", "retryable": True}})
+
+    task_id = f"task_{uuid.uuid4().hex[:12]}"
+    background = payload.options.get("background", "white")
+    render_ai = bool(payload.options.get("renderAiEnhancePreview", False)) or payload.aiMode in {"preview", "enhance"}
+    task = {
+        "taskId": task_id,
+        "status": "queued",
+        "uploadId": payload.uploadId,
+        "templateId": payload.templateId,
+        "platform": payload.platform,
+        "aiMode": payload.aiMode,
+        "options": {
+            "background": background,
+            "renderOfficialIdPhoto": True,
+            "renderAiEnhancePreview": render_ai,
+        },
+        "createdAt": time.time(),
+    }
+    TASKS[task_id] = task
+    return ProcessingTask(**task)
+
+
+@app.get("/api/tasks/{task_id}")
+async def api_get_task(task_id: str):
+    task = TASKS.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail={"error": {"code": "TASK_NOT_FOUND", "message": "Task was not found or has expired.", "retryable": True}})
+
+    elapsed = time.time() - task["createdAt"]
+    if elapsed < 0.8:
+        task["status"] = "queued"
+    elif elapsed < 1.6:
+        task["status"] = "processing"
+    else:
+        task["status"] = "succeeded"
+        if "officialResult" not in task:
+            official_name = copy_upload_to_result(task["uploadId"], task_id, "official")
+            task["officialResult"] = {
+                "fileId": f"file_result_official_{task_id[-6:]}",
+                "previewUrl": public_runtime_url("results", official_name),
+                "downloadUrl": public_runtime_url("results", official_name),
+                "expiresAt": utc_expires_at(90),
+            }
+        if task["options"].get("renderAiEnhancePreview") and "aiEnhanceResult" not in task:
+            ai_name = copy_upload_to_result(task["uploadId"], task_id, "ai")
+            task["aiEnhanceResult"] = {
+                "fileId": f"file_result_ai_{task_id[-6:]}",
+                "previewUrl": public_runtime_url("results", ai_name),
+                "downloadUrl": public_runtime_url("results", ai_name),
+                "expiresAt": utc_expires_at(90),
+            }
+
+    return ProcessingTask(**{key: value for key, value in task.items() if key != "createdAt"})
 
 
 # 证件照智能制作接口

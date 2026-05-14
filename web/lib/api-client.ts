@@ -1,6 +1,6 @@
-// Mock Web v2 client aligned with api/contract.md.
-// Designed so the same upload/task/result flow can later back web and WeChat Mini Program clients.
-// TODO: move these narrow contract types to packages/shared workspace exports when Next workspace imports are formalized.
+// Web v2 client aligned with api/contract.md.
+// It prefers the Phase 2.5 FastAPI adapter when NEXT_PUBLIC_API_BASE_URL is set,
+// and keeps a local mock fallback for backend-less previews.
 
 export type TaskStatus = 'queued' | 'processing' | 'succeeded' | 'failed' | 'expired';
 export type Platform = 'web' | 'mobileWeb' | 'wechatMiniapp';
@@ -10,7 +10,9 @@ export type BackgroundColor = 'white' | 'blue' | 'red' | 'gray';
 export interface UploadHandle {
   uploadId: string;
   fileId: string;
+  filename?: string;
   mimeType: string;
+  url?: string;
   expiresAt: string;
 }
 
@@ -67,9 +69,24 @@ export interface StudioConfig {
   features: { officialIdPhoto: boolean; aiEnhancePreview: boolean; wechatMiniappReady: boolean };
 }
 
+const apiBaseUrl = (process.env.NEXT_PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '');
+const useMockApi = process.env.NEXT_PUBLIC_USE_MOCK_API === 'true' || !apiBaseUrl;
+
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const stamp = () => Math.random().toString(36).slice(2, 8);
 const expiresAt = (minutes: number) => new Date(Date.now() + minutes * 60_000).toISOString();
+
+function apiUrl(path: string) {
+  return `${apiBaseUrl}${path}`;
+}
+
+async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(apiUrl(path), init);
+  if (!response.ok) {
+    throw new Error(`API ${init?.method ?? 'GET'} ${path} failed: ${response.status}`);
+  }
+  return response.json() as Promise<T>;
+}
 
 export const templates: IdPhotoTemplate[] = [
   { templateId: 'cn-id-1inch', label: '一寸', size: '25 × 35 mm', headRange: '头顶 3–5 mm · 肩线居中', printNote: '常用报名 / 简历 / 证件归档' },
@@ -81,7 +98,9 @@ export const config: StudioConfig = {
   consent: {
     required: true,
     title: 'Photo processing consent',
-    body: 'Your portrait stays inside this browser mock during Phase 2; production uploads create expiring file handles.',
+    body: useMockApi
+      ? 'Your portrait stays inside this browser mock unless a backend API base URL is configured.'
+      : 'Your portrait is uploaded to the Phase 2.5 API adapter and receives expiring file handles.',
   },
   privacy: {
     retentionHours: 24,
@@ -92,17 +111,18 @@ export const config: StudioConfig = {
   features: { officialIdPhoto: true, aiEnhancePreview: true, wechatMiniappReady: true },
 };
 
-export async function createUpload(file: File): Promise<UploadHandle> {
+async function mockCreateUpload(file: File): Promise<UploadHandle> {
   await wait(260);
   return {
     uploadId: `upl_mock_${stamp()}`,
     fileId: `file_source_${stamp()}`,
+    filename: file.name,
     mimeType: file.type || 'image/jpeg',
     expiresAt: expiresAt(60),
   };
 }
 
-export async function createTask(input: TaskCreateInput): Promise<ProcessingTask> {
+async function mockCreateTask(input: TaskCreateInput): Promise<ProcessingTask> {
   await wait(240);
   const background = (input.options?.background ?? 'white') as BackgroundColor;
   const renderAiEnhancePreview = input.aiMode === 'preview' || input.aiMode === 'enhance';
@@ -121,7 +141,7 @@ export async function createTask(input: TaskCreateInput): Promise<ProcessingTask
   };
 }
 
-export async function getTask(task: ProcessingTask, tick: number): Promise<ProcessingTask> {
+async function mockGetTask(task: ProcessingTask, tick: number): Promise<ProcessingTask> {
   await wait(180);
   if (tick <= 0) return { ...task, status: 'queued' };
   if (tick === 1) return { ...task, status: 'processing' };
@@ -146,6 +166,33 @@ export async function getTask(task: ProcessingTask, tick: number): Promise<Proce
         }
       : undefined,
   };
+}
+
+export async function createUpload(file: File): Promise<UploadHandle> {
+  if (useMockApi) return mockCreateUpload(file);
+
+  const formData = new FormData();
+  formData.append('file', file);
+  return requestJson<UploadHandle>('/api/uploads', {
+    method: 'POST',
+    body: formData,
+  });
+}
+
+export async function createTask(input: TaskCreateInput): Promise<ProcessingTask> {
+  if (useMockApi) return mockCreateTask(input);
+
+  return requestJson<ProcessingTask>('/api/tasks', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+}
+
+export async function getTask(task: ProcessingTask, tick = 0): Promise<ProcessingTask> {
+  if (useMockApi) return mockGetTask(task, tick);
+
+  return requestJson<ProcessingTask>(`/api/tasks/${task.taskId}`);
 }
 
 export async function getConfig() {
