@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "start": "next start",
     "lint": "echo \"lint placeholder: next build runs TypeScript checks\""
   },
   "dependencies": {
