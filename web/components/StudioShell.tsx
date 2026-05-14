@@ -69,6 +69,7 @@ export default function StudioShell() {
   const [selectedBackground, setSelectedBackground] = useState<BackgroundColor>('white');
   const [aiPreview, setAiPreview] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const template = useMemo(() => templates.find((item) => item.templateId === selectedTemplate), [selectedTemplate]);
 
@@ -83,39 +84,53 @@ export default function StudioShell() {
     setFile(nextFile);
     setTask(null);
     setUpload(null);
+    setErrorMessage(null);
     setPreviewUrl((current) => {
       if (current) URL.revokeObjectURL(current);
       return URL.createObjectURL(nextFile);
     });
-    const nextUpload = await createUpload(nextFile);
-    setUpload(nextUpload);
-    setBusy(false);
+    try {
+      const nextUpload = await createUpload(nextFile);
+      setUpload(nextUpload);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Upload failed.');
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function handleCreateTask() {
     if (!upload) return;
     setBusy(true);
-    const nextTask = await createTask({
-      uploadId: upload.uploadId,
-      templateId: selectedTemplate,
-      platform: 'web',
-      aiMode: aiPreview ? 'preview' : 'none',
-      options: {
-        background: selectedBackground,
-        renderOfficialIdPhoto: true,
-        renderAiEnhancePreview: aiPreview,
-      },
-    });
-    setTask(nextTask);
-    setBusy(false);
+    setErrorMessage(null);
+    try {
+      const nextTask = await createTask({
+        uploadId: upload.uploadId,
+        templateId: selectedTemplate,
+        platform: 'web',
+        aiMode: aiPreview ? 'preview' : 'none',
+        options: {
+          background: selectedBackground,
+          renderOfficialIdPhoto: true,
+          renderAiEnhancePreview: aiPreview,
+        },
+      });
+      setTask(nextTask);
+      setBusy(false);
 
-    const firstPollTask = await getTask(nextTask, 1);
-    setTask(firstPollTask);
-    const secondPollTask = await getTask(firstPollTask, 2);
-    setTask(secondPollTask);
-    if (secondPollTask.status !== 'succeeded') {
-      const finalPollTask = await getTask(secondPollTask, 3);
-      setTask(finalPollTask);
+      let polledTask = nextTask;
+      for (let tick = 1; tick <= 12; tick += 1) {
+        polledTask = await getTask(polledTask, tick);
+        setTask(polledTask);
+        if (['succeeded', 'failed', 'expired'].includes(polledTask.status)) break;
+        await new Promise((resolve) => setTimeout(resolve, 900));
+      }
+      if (polledTask.status === 'failed' || polledTask.status === 'expired') {
+        setErrorMessage(polledTask.error?.message ?? `Task ${polledTask.status}.`);
+      }
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Task creation failed.');
+      setBusy(false);
     }
   }
 
@@ -176,7 +191,7 @@ export default function StudioShell() {
           </div>
 
           <aside className="border-t border-ink/10 bg-[#e8e0d1]/60 p-7 md:p-11 lg:border-l lg:border-t-0 lg:p-12">
-            <TaskStatusRail upload={upload} task={task} />
+            <TaskStatusRail upload={upload} task={task} errorMessage={errorMessage} />
 
             <div className="mt-5">
               <ResultPanel task={task} template={template} selectedBackground={selectedBackground} sourcePreviewUrl={previewUrl} />

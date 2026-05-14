@@ -23,6 +23,15 @@ export interface ResultFile {
   expiresAt: string;
 }
 
+export interface ApiErrorBody {
+  error?: {
+    code: string;
+    message: string;
+    retryable: boolean;
+    traceId?: string;
+  };
+}
+
 export interface ProcessingTask {
   taskId: string;
   status: TaskStatus;
@@ -60,6 +69,9 @@ export interface IdPhotoTemplate {
   size: string;
   headRange: string;
   printNote: string;
+  height?: number;
+  width?: number;
+  dpi?: number;
 }
 
 export interface StudioConfig {
@@ -84,15 +96,24 @@ function apiUrl(path: string) {
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(apiUrl(path), init);
   if (!response.ok) {
-    throw new Error(`API ${init?.method ?? 'GET'} ${path} failed: ${response.status}`);
+    let apiMessage = `API ${init?.method ?? 'GET'} ${path} failed: ${response.status}`;
+    try {
+      const body = (await response.json()) as ApiErrorBody;
+      if (body.error?.message) {
+        apiMessage = `${body.error.code}: ${body.error.message}`;
+      }
+    } catch {
+      // Keep the HTTP fallback message when the error body is not JSON.
+    }
+    throw new Error(apiMessage);
   }
   return response.json() as Promise<T>;
 }
 
 export const templates: IdPhotoTemplate[] = [
-  { templateId: 'cn-id-1inch', label: '一寸', size: '25 × 35 mm', headRange: '头顶 3–5 mm · 肩线居中', printNote: '常用报名 / 简历 / 证件归档' },
-  { templateId: 'cn-id-2inch', label: '二寸', size: '35 × 49 mm', headRange: '脸部 28–33 mm · 留白均衡', printNote: '考试 / 档案 / 纸质冲印' },
-  { templateId: 'passport-visa', label: '护照 / 签证', size: '33 × 48 mm', headRange: '眼线参考 · ICAO 风格构图', printNote: '护照、签证材料预检' },
+  { templateId: 'cn-id-1inch', label: '一寸', size: '25 × 35 mm', headRange: '头顶 3–5 mm · 肩线居中', printNote: '常用报名 / 简历 / 证件归档', height: 413, width: 295, dpi: 300 },
+  { templateId: 'cn-id-2inch', label: '二寸', size: '35 × 49 mm', headRange: '脸部 28–33 mm · 留白均衡', printNote: '考试 / 档案 / 纸质冲印', height: 626, width: 413, dpi: 300 },
+  { templateId: 'passport-visa', label: '护照 / 签证', size: '33 × 48 mm', headRange: '眼线参考 · ICAO 风格构图', printNote: '护照、签证材料预检', height: 567, width: 390, dpi: 300 },
 ];
 
 export const config: StudioConfig = {
@@ -203,6 +224,10 @@ export async function getConfig() {
 }
 
 export async function getTemplates() {
-  await wait(80);
-  return templates;
+  if (useMockApi) {
+    await wait(80);
+    return templates;
+  }
+
+  return requestJson<IdPhotoTemplate[]>('/api/templates');
 }

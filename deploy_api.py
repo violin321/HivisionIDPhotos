@@ -67,6 +67,13 @@ def public_runtime_url(kind: Literal["uploads", "results"], filename: str) -> st
     return f"/runtime/{kind}/{filename}"
 
 
+def error_detail(code: str, message: str, retryable: bool = True, trace_id: str | None = None) -> dict[str, Any]:
+    error: dict[str, Any] = {"code": code, "message": message, "retryable": retryable}
+    if trace_id:
+        error["traceId"] = trace_id
+    return {"error": error}
+
+
 def safe_suffix(filename: str | None, content_type: str | None) -> str:
     suffix = Path(filename or "").suffix.lower()
     if suffix in {".jpg", ".jpeg", ".png", ".webp"}:
@@ -78,10 +85,46 @@ def safe_suffix(filename: str | None, content_type: str | None) -> str:
     return ".jpg"
 
 
+DEFAULT_TEMPLATE_ID = "cn-id-1inch"
+DEFAULT_BACKGROUND = "white"
+
+# Pixel dimensions are mapped from demo/assets/size_list_CN.csv and passed to
+# IDCreator as (height, width). Keep this adapter-level map explicit so Web v2
+# never silently guesses an unsupported template.
 TEMPLATE_SPECS: dict[str, dict[str, Any]] = {
-    "cn-id-1inch": {"height": 413, "width": 295, "head_measure_ratio": 0.2, "head_height_ratio": 0.45},
-    "cn-id-2inch": {"height": 579, "width": 413, "head_measure_ratio": 0.2, "head_height_ratio": 0.45},
-    "passport-visa": {"height": 567, "width": 390, "head_measure_ratio": 0.2, "head_height_ratio": 0.45},
+    "cn-id-1inch": {
+        "label": "一寸",
+        "size_mm": "25 × 35 mm",
+        "height": 413,
+        "width": 295,
+        "dpi": 300,
+        "head_measure_ratio": 0.2,
+        "head_height_ratio": 0.45,
+        "top_distance_max": 0.12,
+        "top_distance_min": 0.10,
+    },
+    "cn-id-2inch": {
+        "label": "二寸",
+        "size_mm": "35 × 49 mm",
+        "height": 626,
+        "width": 413,
+        "dpi": 300,
+        "head_measure_ratio": 0.2,
+        "head_height_ratio": 0.45,
+        "top_distance_max": 0.12,
+        "top_distance_min": 0.10,
+    },
+    "passport-visa": {
+        "label": "大一寸 / 护照签证参考",
+        "size_mm": "33 × 48 mm",
+        "height": 567,
+        "width": 390,
+        "dpi": 300,
+        "head_measure_ratio": 0.2,
+        "head_height_ratio": 0.45,
+        "top_distance_max": 0.12,
+        "top_distance_min": 0.10,
+    },
 }
 
 BACKGROUND_BGR: dict[str, tuple[int, int, int]] = {
@@ -89,6 +132,13 @@ BACKGROUND_BGR: dict[str, tuple[int, int, int]] = {
     "blue": (255, 120, 67),
     "red": (49, 49, 209),
     "gray": (238, 238, 238),
+}
+
+BACKGROUND_LABELS: dict[str, str] = {
+    "white": "白底",
+    "blue": "蓝底",
+    "red": "红底",
+    "gray": "灰底",
 }
 
 TASKS_FILE = RUNTIME_DIR / "tasks.json"
@@ -134,20 +184,65 @@ def load_tasks() -> None:
         logger.exception("[API] failed to load persisted tasks")
 
 
+def supported_template_ids() -> list[str]:
+    return list(TEMPLATE_SPECS.keys())
+
+
+def supported_backgrounds() -> list[str]:
+    return list(BACKGROUND_BGR.keys())
+
+
+def validate_template_id(template_id: str | None) -> str:
+    template = template_id or DEFAULT_TEMPLATE_ID
+    if template not in TEMPLATE_SPECS:
+        raise HTTPException(
+            status_code=400,
+            detail=error_detail(
+                "UNSUPPORTED_TEMPLATE",
+                f"Unsupported templateId '{template}'. Supported values: {', '.join(supported_template_ids())}.",
+                retryable=True,
+            ),
+        )
+    return template
+
+
+def validate_background(background: Any) -> str:
+    value = str(background or DEFAULT_BACKGROUND)
+    if value not in BACKGROUND_BGR:
+        raise HTTPException(
+            status_code=400,
+            detail=error_detail(
+                "UNSUPPORTED_BACKGROUND",
+                f"Unsupported background '{value}'. Supported values: {', '.join(supported_backgrounds())}.",
+                retryable=True,
+            ),
+        )
+    return value
+
+
 def normalize_template_options(template_id: str, options: dict[str, Any]) -> dict[str, Any]:
-    spec = dict(TEMPLATE_SPECS.get(template_id, TEMPLATE_SPECS["cn-id-1inch"]))
+    template = validate_template_id(template_id)
+    spec = dict(TEMPLATE_SPECS[template])
     user_spec = options.get("spec") if isinstance(options.get("spec"), dict) else {}
+    # Only allow controlled numeric overrides, and keep invalid input noisy rather
+    # than silently creating a wrong officialResult.
     for source in (options, user_spec):
         for key in ("height", "width", "dpi", "head_measure_ratio", "head_height_ratio", "top_distance_max", "top_distance_min"):
             if key in source and source[key] is not None:
                 spec[key] = source[key]
-    spec["height"] = int(spec.get("height", 413))
-    spec["width"] = int(spec.get("width", 295))
-    spec["dpi"] = int(spec.get("dpi", 300))
-    spec["head_measure_ratio"] = float(spec.get("head_measure_ratio", 0.2))
-    spec["head_height_ratio"] = float(spec.get("head_height_ratio", 0.45))
-    spec["top_distance_max"] = float(spec.get("top_distance_max", 0.12))
-    spec["top_distance_min"] = float(spec.get("top_distance_min", 0.10))
+    try:
+        spec["height"] = int(spec.get("height", 413))
+        spec["width"] = int(spec.get("width", 295))
+        spec["dpi"] = int(spec.get("dpi", 300))
+        spec["head_measure_ratio"] = float(spec.get("head_measure_ratio", 0.2))
+        spec["head_height_ratio"] = float(spec.get("head_height_ratio", 0.45))
+        spec["top_distance_max"] = float(spec.get("top_distance_max", 0.12))
+        spec["top_distance_min"] = float(spec.get("top_distance_min", 0.10))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Invalid numeric template spec for '{template}': {exc}") from exc
+    if spec["height"] <= 0 or spec["width"] <= 0 or spec["dpi"] <= 0:
+        raise ValueError(f"Invalid template dimensions for '{template}'.")
+    spec["template_id"] = template
     return spec
 
 
@@ -183,7 +278,7 @@ def run_idcreator_task(task_id: str) -> None:
 
         spec = normalize_template_options(task["templateId"], task.get("options", {}))
         background_key = str(task.get("options", {}).get("background", "white"))
-        background_bgr = BACKGROUND_BGR.get(background_key, BACKGROUND_BGR["white"])
+        background_bgr = BACKGROUND_BGR[validate_background(background_key)]
 
         choose_handler(
             creator,
@@ -290,13 +385,52 @@ app.add_middleware(
 
 @app.get("/api/health")
 async def api_health():
-    return {"status": "ok", "service": "hivisionidphotos-api", "phase": "3"}
+    return {"status": "ok", "service": "hivisionidphotos-api", "phase": "4"}
+
+
+@app.get("/api/templates")
+async def api_templates():
+    return [
+        {
+            "templateId": template_id,
+            "label": spec["label"],
+            "size": spec["size_mm"],
+            "height": spec["height"],
+            "width": spec["width"],
+            "dpi": spec["dpi"],
+            "headRange": "IDCreator deterministic crop · adapter validated",
+            "printNote": "Official result is rendered by Hivision IDCreator.",
+        }
+        for template_id, spec in TEMPLATE_SPECS.items()
+    ]
+
+
+@app.get("/api/config")
+async def api_config():
+    return {
+        "consent": {
+            "required": True,
+            "title": "Photo processing consent",
+            "body": "Your uploaded image is processed only for the selected ID photo task.",
+        },
+        "privacy": {
+            "retentionHours": 24,
+            "deletionCopy": "Uploads and generated result files expire automatically.",
+        },
+        "aiDisclaimer": "AI preview is optional, local-derived, and separate from official IDCreator output.",
+        "copy": {"productName": "HivisionIDPhotos Studio", "uploadCta": "Select portrait"},
+        "features": {"officialIdPhoto": True, "aiEnhancePreview": True, "wechatMiniappReady": True},
+        "defaults": {"templateId": DEFAULT_TEMPLATE_ID, "background": DEFAULT_BACKGROUND},
+        "supportedBackgrounds": [
+            {"id": key, "label": BACKGROUND_LABELS[key]} for key in supported_backgrounds()
+        ],
+    }
 
 
 @app.post("/api/uploads")
 async def api_create_upload(file: UploadFile = File(...)):
     if not file.content_type or not file.content_type.startswith("image/"):
-        raise HTTPException(status_code=400, detail={"error": {"code": "INVALID_FILE_TYPE", "message": "Only image uploads are supported.", "retryable": True}})
+        raise HTTPException(status_code=400, detail=error_detail("INVALID_FILE_TYPE", "Only image uploads are supported.", retryable=True))
 
     upload_id = f"upl_{uuid.uuid4().hex[:12]}"
     file_id = f"file_source_{uuid.uuid4().hex[:12]}"
@@ -332,10 +466,11 @@ async def api_create_upload(file: UploadFile = File(...)):
 @app.post("/api/tasks")
 async def api_create_task(payload: TaskCreateRequest, background_tasks: BackgroundTasks):
     if payload.uploadId not in UPLOADS:
-        raise HTTPException(status_code=404, detail={"error": {"code": "UPLOAD_NOT_FOUND", "message": "Upload handle was not found or has expired.", "retryable": True}})
+        raise HTTPException(status_code=404, detail=error_detail("UPLOAD_NOT_FOUND", "Upload handle was not found or has expired.", retryable=True))
 
+    template_id = validate_template_id(payload.templateId)
+    background = validate_background(payload.options.get("background", DEFAULT_BACKGROUND))
     task_id = f"task_{uuid.uuid4().hex[:12]}"
-    background = payload.options.get("background", "white")
     render_ai = bool(payload.options.get("renderAiEnhancePreview", False)) or payload.aiMode in {"preview", "enhance"}
     task_options = dict(payload.options)
     task_options.update({
@@ -348,7 +483,7 @@ async def api_create_task(payload: TaskCreateRequest, background_tasks: Backgrou
         "taskId": task_id,
         "status": "queued",
         "uploadId": payload.uploadId,
-        "templateId": payload.templateId,
+        "templateId": template_id,
         "platform": payload.platform,
         "aiMode": payload.aiMode,
         "options": task_options,
@@ -364,7 +499,7 @@ async def api_create_task(payload: TaskCreateRequest, background_tasks: Backgrou
 async def api_get_task(task_id: str):
     task = TASKS.get(task_id)
     if not task:
-        raise HTTPException(status_code=404, detail={"error": {"code": "TASK_NOT_FOUND", "message": "Task was not found or has expired.", "retryable": True}})
+        raise HTTPException(status_code=404, detail=error_detail("TASK_NOT_FOUND", "Task was not found or has expired.", retryable=True))
 
     return ProcessingTask(**{key: value for key, value in task.items() if key not in {"createdAt", "future"}})
 

@@ -16,6 +16,8 @@ type ResultPanelProps = {
 
 export function ResultPanel({ task, template, selectedBackground, sourcePreviewUrl }: ResultPanelProps) {
   const succeeded = task?.status === 'succeeded' && task.officialResult;
+  const officialPreviewUrl = task?.officialResult?.previewUrl;
+  const aiPreviewUrl = task?.aiEnhanceResult?.previewUrl;
 
   return (
     <section className="rounded-[28px] border border-ink/10 bg-porcelain/80 p-6">
@@ -33,9 +35,9 @@ export function ResultPanel({ task, template, selectedBackground, sourcePreviewU
         <div className="relative mx-auto aspect-[3/4] w-full max-w-[190px] rounded-[22px] border border-ink/15 bg-[#ece6da] p-3 shadow-panel">
           <div className="absolute -left-5 top-8 h-36 w-4 border-y border-ink/25"><div className="ruler-edge h-full opacity-70" /></div>
           <div className={`relative h-full overflow-hidden rounded-[16px] border border-ink/10 bg-gradient-to-b ${backgroundClass[selectedBackground]}`}>
-            {sourcePreviewUrl ? (
+            {officialPreviewUrl || sourcePreviewUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={sourcePreviewUrl} alt="Mock official portrait" className="absolute inset-x-[18%] bottom-0 h-[76%] w-[64%] rounded-t-[44%] object-cover object-top mix-blend-multiply grayscale-[15%]" />
+              <img src={officialPreviewUrl ?? sourcePreviewUrl ?? ''} alt={officialPreviewUrl ? 'Official IDCreator result preview' : 'Source portrait preview'} className={officialPreviewUrl ? 'h-full w-full object-contain' : 'absolute inset-x-[18%] bottom-0 h-[76%] w-[64%] rounded-t-[44%] object-cover object-top mix-blend-multiply grayscale-[15%]'} />
             ) : (
               <div className="absolute inset-x-[18%] bottom-0 flex h-[76%] flex-col items-center justify-end">
                 <div className="mb-[-6px] h-14 w-14 rounded-full border border-ink/10 bg-[#c9bca9]" />
@@ -51,13 +53,15 @@ export function ResultPanel({ task, template, selectedBackground, sourcePreviewU
         <div className="flex flex-col justify-between">
           <div>
             <p className="text-sm leading-6 text-slate">
-              Phase 2.5 returns expiring result URLs from the API adapter; mock fallback remains available when no backend base URL is configured.
+              Phase 4 returns expiring officialResult URLs from deterministic Hivision IDCreator. The AI preview lane is labelled local-derived-preview and never replaces officialResult.
             </p>
             <dl className="mt-5 grid gap-3 text-sm sm:grid-cols-2">
               <div className="rounded-2xl border border-ink/10 bg-paper/60 p-3"><dt className="text-slate">Spec</dt><dd className="mt-1 font-semibold">{template?.label ?? '—'} · {template?.size ?? '—'}</dd></div>
               <div className="rounded-2xl border border-ink/10 bg-paper/60 p-3"><dt className="text-slate">Background</dt><dd className="mt-1 font-semibold">{selectedBackground}</dd></div>
               <div className="rounded-2xl border border-ink/10 bg-paper/60 p-3"><dt className="text-slate">fileId</dt><dd className="mt-1 truncate font-mono text-xs">{task?.officialResult?.fileId ?? '—'}</dd></div>
               <div className="rounded-2xl border border-ink/10 bg-paper/60 p-3"><dt className="text-slate">expiresAt</dt><dd className="mt-1 truncate font-mono text-xs">{task?.officialResult?.expiresAt ?? '—'}</dd></div>
+              <div className="rounded-2xl border border-ink/10 bg-paper/60 p-3"><dt className="text-slate">Result source</dt><dd className="mt-1 font-semibold">{succeeded ? 'officialResult · IDCreator' : '—'}</dd></div>
+              <div className="rounded-2xl border border-ink/10 bg-paper/60 p-3"><dt className="text-slate">AI preview</dt><dd className="mt-1 font-semibold">{task?.options.aiEnhancePreviewKind ?? 'none'}</dd></div>
             </dl>
           </div>
 
@@ -71,8 +75,13 @@ export function ResultPanel({ task, template, selectedBackground, sourcePreviewU
       <div className="mt-5 rounded-[20px] border border-ink/10 bg-ink p-4 text-porcelain">
         <p className="font-mono text-[10px] uppercase tracking-[0.26em] text-[#b7c9cc]">AI Enhance lane</p>
         <p className="mt-2 text-sm leading-6 text-[#d8d1c4]">
-          Optional preview stays in a separate AI lane. It will never replace this official result card or expose provider keys/base URLs in the client.
+          Optional preview stays in a separate AI lane. It is currently {task?.options.aiEnhancePreviewKind ?? 'none'} and will never replace this official result card or expose provider keys/base URLs in the client.
         </p>
+        {aiPreviewUrl && (
+          <a href={aiPreviewUrl} className="mt-3 inline-block rounded-2xl border border-[#d8d1c4]/30 px-4 py-2 text-sm font-semibold text-porcelain">
+            Open local-derived-preview
+          </a>
+        )}
       </div>
     </section>
   );

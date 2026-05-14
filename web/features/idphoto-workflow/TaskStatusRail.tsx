@@ -13,9 +13,10 @@ const labels: Record<TaskStatus, string> = {
 type TaskStatusRailProps = {
   upload: UploadHandle | null;
   task: ProcessingTask | null;
+  errorMessage?: string | null;
 };
 
-export function TaskStatusRail({ upload, task }: TaskStatusRailProps) {
+export function TaskStatusRail({ upload, task, errorMessage }: TaskStatusRailProps) {
   return (
     <aside className="rounded-[28px] border border-ink/10 bg-porcelain/80 p-6">
       <div className="flex items-center justify-between">
@@ -47,6 +48,14 @@ export function TaskStatusRail({ upload, task }: TaskStatusRailProps) {
           );
         })}
       </div>
+
+      {(task?.error || errorMessage) && (
+        <div className="mt-5 rounded-2xl border border-[#b84a42]/25 bg-[#b84a42]/10 p-4 text-sm">
+          <p className="font-semibold text-[#b84a42]">{task?.error?.code ?? 'CLIENT_ERROR'}</p>
+          <p className="mt-1 leading-5 text-graphite">{task?.error?.message ?? errorMessage}</p>
+          {task?.error?.traceId && <p className="mt-2 font-mono text-[11px] text-slate">traceId: {task.error.traceId}</p>}
+        </div>
+      )}
 
       <dl className="mt-6 space-y-4 text-sm">
         <div className="flex justify-between gap-4 border-b border-line pb-3"><dt className="text-slate">uploadId</dt><dd className="max-w-40 truncate font-mono text-xs">{upload?.uploadId ?? '—'}</dd></div>

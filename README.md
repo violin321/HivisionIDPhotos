@@ -52,6 +52,20 @@
 
 <br>
 
+## Phase 4 Web v2 / FastAPI adapter
+
+Phase 4 adds a deployable Web v2 + FastAPI task workflow without replacing the existing Gradio site. See `docs/phase4-deploy.md` for production notes targeting `https://idphoto-ai.violinai.qzz.io`.
+
+Quick local API contract check:
+
+```bash
+.venv/bin/python -m py_compile deploy_api.py
+./scripts/run_phase4_local.sh
+```
+
+Web v2 uses `NEXT_PUBLIC_API_BASE_URL` to call the FastAPI adapter. `officialResult` remains deterministic Hivision/IDCreator output; the optional AI preview is only `local-derived-preview` and does not call GPT-image-2 or require provider keys.
+
+
 # 🤩 最近更新
 
 - 在线体验： [![Spaces](https://img.shields.io/badge/🤗-Open%20in%20Spaces-blue)](https://huggingface.co/spaces/TheEeeeLin/HivisionIDPhotos)、[![][modelscope-shield]][modelscope-link]、[![][modelers-shield]][modelers-link]、[![][compshare-shield]][compshare-link]
