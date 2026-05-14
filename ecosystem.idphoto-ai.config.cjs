@@ -16,11 +16,12 @@ module.exports = {
     },
     {
       name: 'idphoto-ai-web',
-      cwd: '/root/.openclaw/workspace-programmer/HivisionIDPhotos/web',
-      script: 'npm',
-      args: 'run start -- --hostname 127.0.0.1 --port 18083',
+      cwd: '/root/.openclaw/workspace-programmer/HivisionIDPhotos/web/.next/standalone',
+      script: 'server.js',
       env: {
         NODE_ENV: 'production',
+        HOSTNAME: '127.0.0.1',
+        PORT: '18083',
         NEXT_PUBLIC_API_BASE_URL: '/api'
       }
     }
