@@ -5,7 +5,7 @@ import hmac
 import json
 import mimetypes
 import os
-from fastapi import FastAPI, UploadFile, Form, File, HTTPException, BackgroundTasks
+from fastapi import FastAPI, UploadFile, Form, File, HTTPException, BackgroundTasks, Depends, Request, Response
 from fastapi.responses import FileResponse
 import logging
 import shutil
@@ -47,6 +47,11 @@ MAX_UPLOAD_BYTES = int(os.environ.get("IDPHOTO_MAX_UPLOAD_BYTES", str(20 * 1024 
 MAX_IMAGE_PIXELS = int(os.environ.get("IDPHOTO_MAX_IMAGE_PIXELS", str(24_000_000)))
 RUNTIME_TTL_SECONDS = int(os.environ.get("IDPHOTO_RUNTIME_TTL_SECONDS", str(6 * 60 * 60)))
 DOWNLOAD_TTL_SECONDS = int(os.environ.get("IDPHOTO_DOWNLOAD_TTL_SECONDS", str(min(RUNTIME_TTL_SECONDS, 30 * 60))))
+APP_USERNAME = os.environ.get("IDPHOTO_APP_USERNAME", "")
+APP_PASSWORD = os.environ.get("IDPHOTO_APP_PASSWORD", "")
+APP_SESSION_SECRET_RAW = os.environ.get("IDPHOTO_APP_SESSION_SECRET", "")
+APP_SESSION_COOKIE = "idphoto_ai_session"
+APP_SESSION_TTL_SECONDS = int(os.environ.get("IDPHOTO_APP_SESSION_TTL_SECONDS", str(12 * 60 * 60)))
 ALLOWED_UPLOAD_TYPES: dict[str, set[str]] = {
     "image/jpeg": {".jpg", ".jpeg"},
     "image/png": {".png"},
@@ -62,6 +67,12 @@ MultiPartParser.max_part_size = min(MAX_UPLOAD_BYTES, 20 * 1024 * 1024)
 MultiPartParser.max_file_size = MAX_UPLOAD_BYTES
 
 logger = logging.getLogger(__name__)
+
+if APP_SESSION_SECRET_RAW:
+    APP_SESSION_SECRET = APP_SESSION_SECRET_RAW.encode("utf-8")
+else:
+    APP_SESSION_SECRET = os.urandom(32)
+    logger.warning("[API] IDPHOTO_APP_SESSION_SECRET is not set; using an ephemeral app session secret for this process.")
 
 _download_secret = os.environ.get("IDPHOTO_DOWNLOAD_SIGNING_SECRET")
 if _download_secret:
@@ -232,6 +243,69 @@ def _b64url_encode(data: bytes) -> str:
 def _b64url_decode(data: str) -> bytes:
     padding = "=" * (-len(data) % 4)
     return base64.urlsafe_b64decode(data + padding)
+
+
+def auth_is_configured() -> bool:
+    return bool(APP_USERNAME and APP_PASSWORD)
+
+
+def build_session_token(username: str) -> str:
+    expires_at_ts = int(time.time() + APP_SESSION_TTL_SECONDS)
+    payload = {"sub": username, "exp": expires_at_ts}
+    payload_bytes = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    payload_part = _b64url_encode(payload_bytes)
+    signature = hmac.new(APP_SESSION_SECRET, payload_part.encode("ascii"), hashlib.sha256).digest()
+    return f"{payload_part}.{_b64url_encode(signature)}"
+
+
+def verify_session_token(token: str | None) -> dict[str, Any] | None:
+    if not token:
+        return None
+    try:
+        payload_part, signature_part = token.split(".", 1)
+        expected = hmac.new(APP_SESSION_SECRET, payload_part.encode("ascii"), hashlib.sha256).digest()
+        provided = _b64url_decode(signature_part)
+        if not hmac.compare_digest(expected, provided):
+            return None
+        payload = json.loads(_b64url_decode(payload_part).decode("utf-8"))
+    except Exception:
+        return None
+    if int(payload.get("exp", 0)) < int(time.time()):
+        return None
+    if payload.get("sub") != APP_USERNAME:
+        return None
+    return payload
+
+
+def require_auth(request: Request) -> dict[str, Any]:
+    if not auth_is_configured():
+        raise HTTPException(status_code=503, detail=error_detail("AUTH_NOT_CONFIGURED", "Application login is not configured.", retryable=False))
+    session = verify_session_token(request.cookies.get(APP_SESSION_COOKIE))
+    if not session:
+        raise HTTPException(status_code=401, detail=error_detail("AUTH_REQUIRED", "Login is required.", retryable=False))
+    return session
+
+
+def set_session_cookie(response: Response, username: str) -> None:
+    response.set_cookie(
+        key=APP_SESSION_COOKIE,
+        value=build_session_token(username),
+        max_age=APP_SESSION_TTL_SECONDS,
+        httponly=True,
+        secure=os.environ.get("IDPHOTO_APP_COOKIE_SECURE", "1") != "0",
+        samesite="lax",
+        path="/",
+    )
+
+
+def clear_session_cookie(response: Response) -> None:
+    response.delete_cookie(
+        key=APP_SESSION_COOKIE,
+        path="/",
+        secure=os.environ.get("IDPHOTO_APP_COOKIE_SECURE", "1") != "0",
+        httponly=True,
+        samesite="lax",
+    )
 
 
 def result_relative_path(task_id: str, filename: str) -> str:
@@ -545,6 +619,11 @@ class TaskCreateRequest(BaseModel):
     options: dict[str, Any] = Field(default_factory=dict)
 
 
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
 class ProcessingTask(BaseModel):
     taskId: str
     status: TaskStatus
@@ -578,11 +657,33 @@ app.add_middleware(
 
 @app.get("/api/health")
 async def api_health():
-    return {"status": "ok", "service": "hivisionidphotos-api", "phase": "5B"}
+    return {"status": "ok", "service": "hivisionidphotos-api", "phase": "5C"}
+
+
+@app.post("/api/auth/login")
+async def api_auth_login(payload: LoginRequest, response: Response):
+    if not auth_is_configured():
+        raise HTTPException(status_code=503, detail=error_detail("AUTH_NOT_CONFIGURED", "Application login is not configured.", retryable=False))
+    if not (hmac.compare_digest(payload.username, APP_USERNAME) and hmac.compare_digest(payload.password, APP_PASSWORD)):
+        raise HTTPException(status_code=401, detail=error_detail("INVALID_CREDENTIALS", "Username or password is incorrect.", retryable=False))
+    set_session_cookie(response, APP_USERNAME)
+    return {"authenticated": True, "username": APP_USERNAME}
+
+
+@app.get("/api/auth/me")
+async def api_auth_me(request: Request):
+    session = verify_session_token(request.cookies.get(APP_SESSION_COOKIE))
+    return {"authenticated": bool(session), "username": APP_USERNAME if session else None}
+
+
+@app.post("/api/auth/logout")
+async def api_auth_logout(response: Response):
+    clear_session_cookie(response)
+    return {"authenticated": False}
 
 
 @app.get("/api/templates")
-async def api_templates():
+async def api_templates(_session: dict[str, Any] = Depends(require_auth)):
     return [
         {
             "templateId": template_id,
@@ -599,7 +700,7 @@ async def api_templates():
 
 
 @app.get("/api/config")
-async def api_config():
+async def api_config(_session: dict[str, Any] = Depends(require_auth)):
     return {
         "consent": {
             "required": True,
@@ -627,7 +728,7 @@ async def api_config():
 
 
 @app.post("/api/uploads")
-async def api_create_upload(file: UploadFile = File(...)):
+async def api_create_upload(file: UploadFile = File(...), _session: dict[str, Any] = Depends(require_auth)):
     cleanup_runtime()
     content_type = validate_upload_metadata(file.filename, file.content_type)
     content = await file.read()
@@ -664,7 +765,7 @@ async def api_create_upload(file: UploadFile = File(...)):
 
 
 @app.post("/api/tasks")
-async def api_create_task(payload: TaskCreateRequest, background_tasks: BackgroundTasks):
+async def api_create_task(payload: TaskCreateRequest, background_tasks: BackgroundTasks, _session: dict[str, Any] = Depends(require_auth)):
     cleanup_runtime()
     if payload.uploadId not in UPLOADS:
         raise HTTPException(status_code=404, detail=error_detail("UPLOAD_NOT_FOUND", "Upload handle was not found or has expired.", retryable=True))
@@ -697,7 +798,7 @@ async def api_create_task(payload: TaskCreateRequest, background_tasks: Backgrou
 
 
 @app.get("/api/downloads/{token}")
-async def api_download_result(token: str):
+async def api_download_result(token: str, _session: dict[str, Any] = Depends(require_auth)):
     cleanup_runtime()
     payload = verify_download_token(token)
     path = resolve_result_file(payload["path"])
@@ -707,7 +808,7 @@ async def api_download_result(token: str):
 
 
 @app.get("/api/tasks/{task_id}")
-async def api_get_task(task_id: str):
+async def api_get_task(task_id: str, _session: dict[str, Any] = Depends(require_auth)):
     cleanup_runtime()
     task = TASKS.get(task_id)
     if not task:

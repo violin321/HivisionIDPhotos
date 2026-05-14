@@ -83,6 +83,11 @@ export interface StudioConfig {
   features: { officialIdPhoto: boolean; aiEnhancePreview: boolean; wechatMiniappReady: boolean };
 }
 
+export interface AuthState {
+  authenticated: boolean;
+  username?: string | null;
+}
+
 const apiBaseUrl = (process.env.NEXT_PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '');
 const useMockApi = process.env.NEXT_PUBLIC_USE_MOCK_API === 'true' || !apiBaseUrl;
 
@@ -95,7 +100,7 @@ function apiUrl(path: string) {
 }
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(apiUrl(path), init);
+  const response = await fetch(apiUrl(path), { credentials: 'include', ...init });
   if (!response.ok) {
     let apiMessage = `API ${init?.method ?? 'GET'} ${path} failed: ${response.status}`;
     try {
@@ -196,6 +201,34 @@ async function mockGetTask(task: ProcessingTask, tick: number): Promise<Processi
         }
       : undefined,
   };
+}
+
+export async function login(username: string, password: string): Promise<AuthState> {
+  if (useMockApi) {
+    await wait(120);
+    return { authenticated: true, username };
+  }
+  return requestJson<AuthState>('/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  });
+}
+
+export async function getAuthState(): Promise<AuthState> {
+  if (useMockApi) {
+    await wait(80);
+    return { authenticated: false };
+  }
+  return requestJson<AuthState>('/api/auth/me');
+}
+
+export async function logout(): Promise<AuthState> {
+  if (useMockApi) {
+    await wait(80);
+    return { authenticated: false };
+  }
+  return requestJson<AuthState>('/api/auth/logout', { method: 'POST' });
 }
 
 export async function createUpload(file: File): Promise<UploadHandle> {

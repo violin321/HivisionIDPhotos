@@ -8,7 +8,10 @@ module.exports = {
       interpreter: 'none',
       env: {
         PYTHONUNBUFFERED: '1',
-        IDPHOTO_DOWNLOAD_SIGNING_SECRET: process.env.IDPHOTO_DOWNLOAD_SIGNING_SECRET || ''
+        IDPHOTO_DOWNLOAD_SIGNING_SECRET: process.env.IDPHOTO_DOWNLOAD_SIGNING_SECRET || '',
+        IDPHOTO_APP_USERNAME: process.env.IDPHOTO_APP_USERNAME || '',
+        IDPHOTO_APP_PASSWORD: process.env.IDPHOTO_APP_PASSWORD || '',
+        IDPHOTO_APP_SESSION_SECRET: process.env.IDPHOTO_APP_SESSION_SECRET || ''
       }
     },
     {

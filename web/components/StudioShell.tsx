@@ -60,7 +60,7 @@ function HeroPlate({ previewUrl, background }: { previewUrl: string | null; back
   );
 }
 
-export default function StudioShell() {
+export default function StudioShell({ username, onLogout }: { username?: string | null; onLogout?: () => Promise<void> }) {
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [upload, setUpload] = useState<UploadHandle | null>(null);
@@ -146,7 +146,19 @@ export default function StudioShell() {
                   Precision Studio
                 </h1>
               </div>
-              <StatusPill>Phase 2.5</StatusPill>
+              <div className="flex items-center gap-3">
+                {username ? <span className="hidden font-mono text-[11px] uppercase tracking-[0.22em] text-slate md:inline">{username}</span> : null}
+                {onLogout ? (
+                  <button
+                    type="button"
+                    onClick={() => void onLogout()}
+                    className="rounded-full border border-ink/15 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-graphite transition hover:border-ink/35 hover:text-ink"
+                  >
+                    Logout
+                  </button>
+                ) : null}
+                <StatusPill>Phase 5C</StatusPill>
+              </div>
             </div>
 
             <div className="grid gap-8 lg:grid-cols-[1fr_240px]">
