@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import type { BackgroundColor, IdPhotoTemplate, TaskOptions } from '../../lib/api-client';
+import type { AiProMode, BackgroundColor, IdPhotoTemplate, TaskOptions } from '../../lib/api-client';
 import { usePreferences } from '../../lib/preferences';
 
 
@@ -49,6 +49,11 @@ const layoutPaperSizes = [
   { value: 'five-inch', label: '5 inch · 1051×1500' },
   { value: 'a4', label: 'A4 · 2479×3508' },
 ] as const;
+const aiProModes: Array<{ value: AiProMode; label: string; note: string }> = [
+  { value: 'ai_repair', label: 'AI 精修', note: 'mock：轻量修复预览' },
+  { value: 'ai_blue_formal_id_photo', label: 'AI 蓝底证件照', note: '候选结果，需按平台核验' },
+  { value: 'executive_headshot', label: '高端影棚肖像', note: '非正式证件用途' },
+];
 const templateCategories = ['all', 'common', 'exam', 'visa', 'credential'] as const;
 type TemplateCategory = (typeof templateCategories)[number];
 
@@ -308,18 +313,73 @@ export function WorkflowControls({
         </div>
       ) : null}
 
-      <div className="mt-4 rounded-[18px] border border-ink/10 bg-paper/55 p-4 text-graphite">
-        <div className="flex items-start justify-between gap-3">
+      <div className="mt-4 rounded-[18px] border border-amber/25 bg-paper/60 p-4 text-graphite">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <p className="font-mono text-[10px] uppercase tracking-[0.26em] text-slate">{t('optionalBranch')}</p>
-            <h4 className="mt-1 font-semibold">{t('aiEnhancePreview')}</h4>
-            <p className="mt-1 text-xs leading-5 text-slate">{t('aiComingSoon')}</p>
+            <p className="font-mono text-[10px] uppercase tracking-[0.26em] text-amber">AI PRO · MOCK</p>
+            <h4 className="mt-1 font-semibold">上传时预选 AI Pro</h4>
+            <p className="mt-1 text-xs leading-5 text-slate">当前只生成 mock preview，不调用外部 AI API，也不产生真实支付。</p>
           </div>
           <label className="flex cursor-pointer items-center gap-2 text-xs text-slate">
-            <input type="checkbox" checked={aiPreview} onChange={(event) => onAiPreviewChange(event.target.checked)} disabled className="accent-amber" />
-            {t('disabled')}
+            <input
+              type="checkbox"
+              checked={Boolean(taskOptions.aiPro?.enabled)}
+              onChange={(event) => {
+                const enabled = event.target.checked;
+                onTaskOptionsChange({
+                  aiPro: {
+                    enabled,
+                    modes: enabled ? (taskOptions.aiPro?.modes?.length ? taskOptions.aiPro.modes : ['ai_repair']) : [],
+                    promptParams: taskOptions.aiPro?.promptParams ?? { outfit: '深色西装/白衬衫', backgroundColor: selectedBackground, style: 'natural', retouchLevel: 'medium' },
+                    consentAccepted: enabled ? Boolean(taskOptions.aiPro?.consentAccepted) : false,
+                  },
+                });
+                onAiPreviewChange(enabled);
+              }}
+              className="accent-amber"
+            />
+            开启 AI Pro
           </label>
         </div>
+
+        {taskOptions.aiPro?.enabled ? (
+          <div className="mt-4 space-y-4">
+            <div className="grid gap-2 md:grid-cols-3">
+              {aiProModes.map((mode) => {
+                const active = taskOptions.aiPro?.modes?.includes(mode.value);
+                return (
+                  <label key={mode.value} className={`cursor-pointer rounded-2xl border p-3 text-sm transition ${active ? 'border-amber bg-amber/10' : 'border-ink/10 bg-porcelain/70'}`}>
+                    <input
+                      type="checkbox"
+                      checked={Boolean(active)}
+                      onChange={(event) => {
+                        const current = taskOptions.aiPro?.modes ?? [];
+                        const modes = event.target.checked ? [...new Set([...current, mode.value])] : current.filter((item) => item !== mode.value);
+                        onTaskOptionsChange({ aiPro: { ...taskOptions.aiPro!, modes } });
+                      }}
+                      className="mr-2 accent-amber"
+                    />
+                    <span className="font-semibold">{mode.label}</span>
+                    <span className="mt-1 block text-xs leading-5 text-slate">{mode.note}</span>
+                  </label>
+                );
+              })}
+            </div>
+            <div className="grid gap-3 md:grid-cols-3">
+              <input type="text" value={(taskOptions.aiPro.promptParams.outfit as string | undefined) ?? ''} onChange={(event) => onTaskOptionsChange({ aiPro: { ...taskOptions.aiPro!, promptParams: { ...taskOptions.aiPro!.promptParams, outfit: event.target.value } } })} placeholder="服装：深色西装/白衬衫" className="rounded-2xl border border-ink/10 bg-porcelain px-3 py-3 text-sm" />
+              <input type="text" value={(taskOptions.aiPro.promptParams.style as string | undefined) ?? ''} onChange={(event) => onTaskOptionsChange({ aiPro: { ...taskOptions.aiPro!, promptParams: { ...taskOptions.aiPro!.promptParams, style: event.target.value } } })} placeholder="风格：natural / studio" className="rounded-2xl border border-ink/10 bg-porcelain px-3 py-3 text-sm" />
+              <select value={(taskOptions.aiPro.promptParams.retouchLevel as string | undefined) ?? 'medium'} onChange={(event) => onTaskOptionsChange({ aiPro: { ...taskOptions.aiPro!, promptParams: { ...taskOptions.aiPro!.promptParams, retouchLevel: event.target.value } } })} className="rounded-2xl border border-ink/10 bg-porcelain px-3 py-3 text-sm">
+                <option value="low">低强度</option>
+                <option value="medium">中强度</option>
+                <option value="high">高强度</option>
+              </select>
+            </div>
+            <label className="flex items-start gap-2 rounded-2xl border border-dashed border-amber/35 bg-amber/5 px-3 py-3 text-xs leading-5 text-slate">
+              <input type="checkbox" checked={Boolean(taskOptions.aiPro.consentAccepted)} onChange={(event) => onTaskOptionsChange({ aiPro: { ...taskOptions.aiPro!, consentAccepted: event.target.checked } })} className="mt-1 accent-amber" />
+              我同意将图片用于 AI Pro 生成；当前为 mock，但未来可能上传第三方 AI 服务。
+            </label>
+          </div>
+        ) : null}
       </div>
 
       <SpecSelectorDialog open={selectorOpen} templates={templates} selectedTemplate={selectedTemplate} onClose={() => setSelectorOpen(false)} onTemplateChange={onTemplateChange} />

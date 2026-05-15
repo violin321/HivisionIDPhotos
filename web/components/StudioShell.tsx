@@ -252,6 +252,12 @@ export default function StudioShell({ username, onLogout }: { username?: string 
     renderMode: 'solid',
     customBackgroundEnabled: false,
     customBackgroundHex: '#626BCE',
+    aiPro: {
+      enabled: false,
+      modes: [],
+      promptParams: { outfit: '深色西装/白衬衫', backgroundColor: 'blue', style: 'natural', retouchLevel: 'medium' },
+      consentAccepted: false,
+    },
   });
 
   const template = useMemo(() => templateOptions.find((item) => item.templateId === selectedTemplate), [selectedTemplate, templateOptions]);
@@ -325,6 +331,13 @@ export default function StudioShell({ username, onLogout }: { username?: string 
           background: taskOptions.customBackgroundEnabled ? 'custom' : selectedBackground,
           renderOfficialIdPhoto: true,
           renderAiEnhancePreview: aiPreview,
+          aiPro: {
+            ...(taskOptions.aiPro ?? { enabled: false, modes: [], promptParams: {}, consentAccepted: false }),
+            promptParams: {
+              ...(taskOptions.aiPro?.promptParams ?? {}),
+              backgroundColor: taskOptions.customBackgroundEnabled ? 'custom' : selectedBackground,
+            },
+          },
         },
       });
       setTask(nextTask);

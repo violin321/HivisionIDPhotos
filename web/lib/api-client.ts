@@ -5,6 +5,7 @@
 export type TaskStatus = 'queued' | 'processing' | 'succeeded' | 'failed' | 'expired';
 export type Platform = 'web' | 'mobileWeb' | 'wechatMiniapp';
 export type AiMode = 'none' | 'preview' | 'enhance';
+export type AiProMode = 'ai_repair' | 'ai_blue_formal_id_photo' | 'executive_headshot';
 export type BackgroundColor = 'white' | 'blue' | 'red' | 'gray';
 export type TaskBackgroundColor = BackgroundColor | 'custom';
 export type QualityIssueSeverity = 'warning' | 'error';
@@ -42,6 +43,35 @@ export interface ResultFile {
   previewUrl: string;
   downloadUrl: string;
   expiresAt: string;
+}
+
+export interface AiProRequest {
+  enabled: boolean;
+  modes: AiProMode[];
+  promptParams: {
+    backgroundColor?: string;
+    outfit?: string;
+    expression?: string;
+    retouchLevel?: string;
+    outputSpec?: string;
+    style?: string;
+    [key: string]: unknown;
+  };
+  consentAccepted: boolean;
+}
+
+export interface AiProResult {
+  mode: AiProMode | string;
+  status: string;
+  imageUrl?: string | null;
+  previewUrl?: string | null;
+  usageLabel: string;
+  promptTemplateId: string;
+  templateVersion: string;
+  paid: boolean;
+  qualityReport?: Record<string, unknown> | null;
+  promptMetadata: Record<string, unknown>;
+  mock?: boolean;
 }
 
 export interface ApiErrorBody {
@@ -95,6 +125,7 @@ export interface TaskOptions {
   backgroundRgb?: [number, number, number];
   pluginFlags?: string[];
   spec?: Record<string, unknown>;
+  aiPro?: AiProRequest;
   [key: string]: unknown;
 }
 
@@ -108,6 +139,10 @@ export interface ProcessingTask {
   options: TaskOptions;
   officialResult?: ResultFile;
   aiEnhanceResult?: ResultFile;
+  freeResult?: ResultFile;
+  proResults?: AiProResult[];
+  stages?: Record<string, unknown>;
+  aiPro?: AiProRequest;
   layoutResult?: ResultFile;
   watermarkedResult?: ResultFile;
   compressedResult?: ResultFile;
@@ -149,7 +184,7 @@ export interface StudioConfig {
   uploadLimits?: { maxBytes: number; maxPixels: number; allowedMimeTypes: string[]; allowedExtensions: string[] };
   aiDisclaimer: string;
   copy: { productName: string; uploadCta: string };
-  features: { officialIdPhoto: boolean; aiEnhancePreview: boolean; wechatMiniappReady: boolean };
+  features: { officialIdPhoto: boolean; aiEnhancePreview: boolean; aiPro?: boolean; wechatMiniappReady: boolean };
 }
 
 export interface AuthState {
@@ -263,7 +298,7 @@ export const config: StudioConfig = {
   },
   aiDisclaimer: 'AI enhance is optional and visually separated from official ID photo output.',
   copy: { productName: 'HivisionIDPhotos Studio', uploadCta: 'Select portrait' },
-  features: { officialIdPhoto: true, aiEnhancePreview: true, wechatMiniappReady: true },
+  features: { officialIdPhoto: true, aiEnhancePreview: true, aiPro: true, wechatMiniappReady: true },
 };
 
 async function mockCreateUpload(file: File): Promise<UploadHandle> {
@@ -281,6 +316,7 @@ async function mockCreateTask(input: TaskCreateInput): Promise<ProcessingTask> {
   await wait(240);
   const background = (input.options?.background ?? 'white') as BackgroundColor;
   const renderAiEnhancePreview = input.aiMode === 'preview' || input.aiMode === 'enhance';
+  const aiPro = input.options?.aiPro;
   return {
     taskId: `task_mock_${stamp()}`,
     status: 'queued',
@@ -293,7 +329,11 @@ async function mockCreateTask(input: TaskCreateInput): Promise<ProcessingTask> {
       renderOfficialIdPhoto: true,
       renderAiEnhancePreview,
       aiEnhancePreviewKind: renderAiEnhancePreview ? 'local-derived-preview' : 'none',
+      aiPro,
     },
+    aiPro,
+    proResults: [],
+    stages: { core: { status: 'queued' }, aiPro: { status: aiPro?.enabled ? 'queued' : 'skipped' } },
   };
 }
 
@@ -319,11 +359,26 @@ async function mockGetTask(task: ProcessingTask, tick: number): Promise<Processi
     ...task,
     status: 'succeeded',
     officialResult,
+    freeResult: officialResult,
     layoutResult: task.options.printLayoutEnabled ? derivedResult('layout') : undefined,
     watermarkedResult: task.options.watermarkEnabled ? derivedResult('watermarked') : undefined,
     compressedResult: typeof task.options.imageKb === 'number' ? derivedResult('compressed') : undefined,
     compressedTargetKb: typeof task.options.imageKb === 'number' ? task.options.imageKb : undefined,
     aiEnhanceResult: task.options.renderAiEnhancePreview ? derivedResult('ai') : undefined,
+    proResults: task.aiPro?.enabled ? task.aiPro.modes.map((mode) => ({
+      mode,
+      status: 'mock_completed',
+      imageUrl: officialResult.previewUrl,
+      previewUrl: officialResult.previewUrl,
+      usageLabel: mode === 'executive_headshot' ? 'non_official_portrait' : mode === 'ai_blue_formal_id_photo' ? 'official_candidate' : 'preview_repair',
+      promptTemplateId: mode === 'executive_headshot' ? 'executive_headshot_apple_style' : mode === 'ai_blue_formal_id_photo' ? 'ai_blue_formal_id_photo' : 'ai_repair_basic',
+      templateVersion: '2026-05-phase1',
+      paid: false,
+      qualityReport: { mock: true, source: 'core_quality_report' },
+      promptMetadata: { mockSource: 'freeResult', selectedParams: task.aiPro?.promptParams ?? {} },
+      mock: true,
+    })) : [],
+    stages: { core: { status: 'completed' }, aiPro: { status: task.aiPro?.enabled ? 'mock_completed' : 'skipped' } },
     qualityReport: {
       score: 92,
       passed: true,
