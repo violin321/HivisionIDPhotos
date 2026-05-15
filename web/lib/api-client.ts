@@ -65,6 +65,7 @@ export interface AiProResult {
   status: string;
   imageUrl?: string | null;
   previewUrl?: string | null;
+  downloadUrl?: string | null;
   usageLabel: string;
   promptTemplateId: string;
   templateVersion: string;
@@ -375,7 +376,20 @@ async function mockGetTask(task: ProcessingTask, tick: number): Promise<Processi
       templateVersion: '2026-05-phase1',
       paid: false,
       qualityReport: { mock: true, source: 'core_quality_report' },
-      promptMetadata: { mockSource: 'freeResult', selectedParams: task.aiPro?.promptParams ?? {} },
+      downloadUrl: officialResult.downloadUrl,
+      promptMetadata: {
+        provider: 'mock',
+        providerStatus: 'no_credentials',
+        model: null,
+        inputSource: 'freeResult',
+        mock: true,
+        fallback: true,
+        errorCode: 'NO_CREDENTIALS',
+        durationMs: 0,
+        finalPromptHash: null,
+        mockSource: 'freeResult',
+        selectedParams: task.aiPro?.promptParams ?? {},
+      },
       mock: true,
     })) : [],
     stages: { core: { status: 'completed' }, aiPro: { status: task.aiPro?.enabled ? 'mock_completed' : 'skipped' } },
@@ -462,7 +476,7 @@ export async function getAdminStats(): Promise<AdminStats> {
   if (useMockApi) {
     await wait(80);
     return {
-      phase: '5D',
+      phase: '5E',
       generatedAt: new Date().toISOString(),
       today: { logins: 1, uploads: 0, tasksSucceeded: 0, tasksFailed: 0, downloads: 0, rateLimitHits: 0 },
       last24h: { logins: 1, uploads: 0, tasksSucceeded: 0, tasksFailed: 0, downloads: 0, rateLimitHits: 0 },

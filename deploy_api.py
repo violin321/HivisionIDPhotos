@@ -28,6 +28,7 @@ from hivision.creator.layout_calculator import (
 from hivision.creator.choose_handler import choose_handler
 from hivision.plugin.ai_enhance import AIEnhanceRequest, AIEnhanceService
 from hivision.plugin.ai_enhance.errors import AIEnhanceValidationError
+from hivision.plugin.ai_pro import AIProEngine
 from hivision.utils import (
     add_background,
     resize_image_to_kb,
@@ -58,7 +59,7 @@ RATE_LIMIT_UPLOADS_PER_MINUTE = int(os.environ.get("IDPHOTO_RATE_LIMIT_UPLOADS_P
 RATE_LIMIT_TASKS_PER_MINUTE = int(os.environ.get("IDPHOTO_RATE_LIMIT_TASKS_PER_MINUTE", "10"))
 RATE_LIMIT_LOGIN_PER_MINUTE = int(os.environ.get("IDPHOTO_RATE_LIMIT_LOGIN_PER_MINUTE", "10"))
 AUDIT_IP_HASH_SECRET = os.environ.get("IDPHOTO_AUDIT_IP_HASH_SECRET") or APP_SESSION_SECRET_RAW or "idphoto-ai-audit-local"
-SERVICE_PHASE = "5D"
+SERVICE_PHASE = "5E"
 ALLOWED_UPLOAD_TYPES: dict[str, set[str]] = {
     "image/jpeg": {".jpg", ".jpeg"},
     "image/png": {".png"},
@@ -91,6 +92,7 @@ else:
 app = FastAPI()
 creator = IDCreator()
 ai_enhance_service = AIEnhanceService()
+ai_pro_engine = AIProEngine()
 
 RUNTIME_DIR = Path(__file__).resolve().parent / ".runtime"
 UPLOAD_DIR = RUNTIME_DIR / "uploads"
@@ -1153,24 +1155,72 @@ def normalize_ai_pro_request(ai_pro: Any) -> dict[str, Any]:
     }
 
 
-def build_ai_pro_mock_results(task_id: str, free_result: dict[str, Any] | None, ai_pro: dict[str, Any], quality_report: dict[str, Any] | None) -> list[dict[str, Any]]:
+def _ai_pro_base_metadata(mode: str, template: dict[str, Any], ai_pro: dict[str, Any], *, mock: bool, status: str, error_code: str | None = None, engine_metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+    metadata = dict(template.get("promptMetadata", {}))
+    metadata.update({
+        "mode": mode,
+        "provider": "mock",
+        "providerStatus": status,
+        "model": None,
+        "templateId": template["id"],
+        "templateVersion": template["version"],
+        "inputSource": "freeResult",
+        "mock": mock,
+        "fallback": mock,
+        "errorCode": error_code,
+        "durationMs": 0,
+        "finalPromptHash": None,
+        "selectedParams": ai_pro.get("promptParams", {}),
+    })
+    if engine_metadata:
+        metadata.update(engine_metadata)
+    return metadata
+
+
+def build_ai_pro_final_prompt(ai_pro: dict[str, Any], template: dict[str, Any]) -> tuple[str, str]:
+    params = ai_pro.get("promptParams") or {}
+    spec_profile = PROMPT_TEMPLATE_REGISTRY["cn_blue_480x640_20_40kb"]["promptMetadata"].get("specProfile")
+    prompt_parts = [
+        "Create a conservative AI-enhanced blue-background formal ID photo candidate from the provided IDCreator result.",
+        "Preserve the same person's identity, facial features, age, expression, pose, crop, and natural proportions.",
+        "Use an even official blue background, natural skin tone, restrained studio lighting, and no decorative elements.",
+        "Do not present this as a guaranteed official deterministic result; it is an AI candidate requiring human/platform verification.",
+        f"Outfit guidance: {params.get('outfit') or 'dark suit, white shirt'}.",
+        f"Retouch level: {params.get('retouchLevel') or 'medium'}; style: {params.get('style') or 'natural'}.",
+        f"Target spec reference: {spec_profile}.",
+    ]
+    final_prompt = " ".join(prompt_parts)
+    final_prompt_hash = hashlib.sha256(final_prompt.encode("utf-8")).hexdigest()[:16]
+    return final_prompt, final_prompt_hash
+
+
+def build_ai_pro_mock_results(task_id: str, free_result: dict[str, Any] | None, ai_pro: dict[str, Any], quality_report: dict[str, Any] | None, *, mode_status: dict[str, dict[str, Any]] | None = None) -> list[dict[str, Any]]:
     if not ai_pro.get("enabled"):
         return []
     preview_url = (free_result or {}).get("previewUrl")
     results: list[dict[str, Any]] = []
     for mode in ai_pro.get("modes", []):
         template = PROMPT_TEMPLATE_REGISTRY[AI_PRO_MODE_TEMPLATE.get(mode, "ai_repair_basic")]
-        metadata = dict(template.get("promptMetadata", {}))
+        status_info = (mode_status or {}).get(mode, {})
+        metadata = _ai_pro_base_metadata(
+            mode,
+            template,
+            ai_pro,
+            mock=True,
+            status=str(status_info.get("status") or "mock_completed"),
+            error_code=status_info.get("errorCode"),
+            engine_metadata=status_info.get("metadata"),
+        )
         metadata["mockSource"] = "freeResult"
-        metadata["selectedParams"] = ai_pro.get("promptParams", {})
         if mode == "ai_blue_formal_id_photo":
             metadata["specProfile"] = PROMPT_TEMPLATE_REGISTRY["cn_blue_480x640_20_40kb"]["promptMetadata"].get("specProfile")
             metadata["qualityRules"] = PROMPT_TEMPLATE_REGISTRY["cn_blue_480x640_20_40kb"]["promptMetadata"].get("qualityRules")
         results.append({
             "mode": mode,
-            "status": "mock_completed",
+            "status": str(status_info.get("resultStatus") or status_info.get("status") or "mock_completed"),
             "imageUrl": preview_url,
             "previewUrl": preview_url,
+            "downloadUrl": (free_result or {}).get("downloadUrl"),
             "usageLabel": template["usageLabel"],
             "promptTemplateId": template["id"],
             "templateVersion": template["version"],
@@ -1180,6 +1230,70 @@ def build_ai_pro_mock_results(task_id: str, free_result: dict[str, Any] | None, 
             "mock": True,
         })
     return results
+
+
+def build_ai_pro_results(task_id: str, result_dir: Path, ai_pro: dict[str, Any], free_result: dict[str, Any] | None, quality_report: dict[str, Any] | None) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    if not ai_pro.get("enabled"):
+        return [], {"status": "skipped"}
+    results: list[dict[str, Any]] = []
+    stage_modes: dict[str, str] = {}
+    for mode in ai_pro.get("modes", []):
+        template = PROMPT_TEMPLATE_REGISTRY[AI_PRO_MODE_TEMPLATE.get(mode, "ai_repair_basic")]
+        if mode != "ai_blue_formal_id_photo":
+            mock_result = build_ai_pro_mock_results(task_id, free_result, {**ai_pro, "modes": [mode]}, quality_report)[0]
+            mock_result["status"] = "mock_completed"
+            results.append(mock_result)
+            stage_modes[mode] = "mock_completed"
+            continue
+
+        final_prompt, final_prompt_hash = build_ai_pro_final_prompt(ai_pro, template)
+        input_filename = "official_idcreator.jpg" if (result_dir / "official_idcreator.jpg").exists() else "official_idcreator.png"
+        engine_result = ai_pro_engine.run_blue_formal_id_photo(
+            input_path=result_dir / input_filename,
+            output_dir=result_dir,
+            final_prompt=final_prompt,
+            template_id=template["id"],
+            template_version=template["version"],
+        )
+        metadata = _ai_pro_base_metadata(
+            mode,
+            template,
+            ai_pro,
+            mock=engine_result.status != "completed",
+            status=engine_result.status,
+            error_code=engine_result.metadata.get("errorCode"),
+            engine_metadata={**engine_result.metadata, "finalPromptHash": engine_result.metadata.get("finalPromptHash") or final_prompt_hash},
+        )
+        metadata["specProfile"] = PROMPT_TEMPLATE_REGISTRY["cn_blue_480x640_20_40kb"]["promptMetadata"].get("specProfile")
+        metadata["qualityRules"] = PROMPT_TEMPLATE_REGISTRY["cn_blue_480x640_20_40kb"]["promptMetadata"].get("qualityRules")
+        if engine_result.status == "completed" and engine_result.image_path:
+            result_file = build_result_file(task_id, "ai_pro_blue", engine_result.image_path.name)
+            results.append({
+                "mode": mode,
+                "status": "completed",
+                "imageUrl": result_file["previewUrl"],
+                "previewUrl": result_file["previewUrl"],
+                "downloadUrl": result_file["downloadUrl"],
+                "usageLabel": template["usageLabel"],
+                "promptTemplateId": template["id"],
+                "templateVersion": template["version"],
+                "paid": False,
+                "qualityReport": {"source": "ai_provider", "corePassed": bool((quality_report or {}).get("passed")), "mock": False},
+                "promptMetadata": metadata,
+                "mock": False,
+            })
+            stage_modes[mode] = "completed"
+        else:
+            fallback = build_ai_pro_mock_results(task_id, free_result, {**ai_pro, "modes": [mode]}, quality_report, mode_status={mode: {"status": engine_result.status, "resultStatus": engine_result.status, "errorCode": engine_result.metadata.get("errorCode"), "metadata": metadata}})[0]
+            results.append(fallback)
+            stage_modes[mode] = engine_result.status
+    if all(status == "completed" for status in stage_modes.values()):
+        stage_status = "completed"
+    elif any(status in {"no_credentials", "fallback"} for status in stage_modes.values()):
+        stage_status = "fallback"
+    else:
+        stage_status = "mock_completed"
+    return results, {"status": stage_status, "modes": ai_pro.get("modes", []), "modeStatuses": stage_modes, "paid": False}
 
 def run_idcreator_task(task_id: str) -> None:
     task = TASKS[task_id]
@@ -1286,8 +1400,16 @@ def run_idcreator_task(task_id: str) -> None:
 
         ai_pro = task.get("aiPro") or {"enabled": False, "modes": [], "promptParams": {}, "consentAccepted": False}
         if ai_pro.get("enabled"):
-            task["proResults"] = build_ai_pro_mock_results(task_id, task.get("freeResult"), ai_pro, task.get("qualityReport"))
-            task.setdefault("stages", {})["aiPro"] = {"status": "mock_completed", "modes": ai_pro.get("modes", []), "paid": False}
+            task.setdefault("stages", {})["aiPro"] = {"status": "processing", "modes": ai_pro.get("modes", []), "paid": False}
+            persist_tasks()
+            try:
+                pro_results, ai_pro_stage = build_ai_pro_results(task_id, result_dir, ai_pro, task.get("freeResult"), task.get("qualityReport"))
+                task["proResults"] = pro_results
+                task.setdefault("stages", {})["aiPro"] = ai_pro_stage
+            except Exception as exc:
+                logger.exception("[API] AI Pro engine failed and fell back to mock: task_id=%s", task_id)
+                task["proResults"] = build_ai_pro_mock_results(task_id, task.get("freeResult"), ai_pro, task.get("qualityReport"), mode_status={"ai_blue_formal_id_photo": {"status": "error", "resultStatus": "error", "errorCode": exc.__class__.__name__}})
+                task.setdefault("stages", {})["aiPro"] = {"status": "fallback", "modes": ai_pro.get("modes", []), "paid": False, "errorCode": exc.__class__.__name__}
         else:
             task["proResults"] = []
             task.setdefault("stages", {})["aiPro"] = {"status": "skipped"}
@@ -1351,6 +1473,7 @@ class AiProResult(BaseModel):
     status: str
     imageUrl: str | None = None
     previewUrl: str | None = None
+    downloadUrl: str | None = None
     usageLabel: str
     promptTemplateId: str
     templateVersion: str
@@ -1492,9 +1615,9 @@ async def api_config(_session: dict[str, Any] = Depends(require_auth)):
             "allowedMimeTypes": sorted(ALLOWED_UPLOAD_TYPES.keys()),
             "allowedExtensions": sorted({ext for exts in ALLOWED_UPLOAD_TYPES.values() for ext in exts}),
         },
-        "aiDisclaimer": "AI preview is optional, local-derived, and separate from official IDCreator output.",
+        "aiDisclaimer": "AI preview / AI Pro are optional and separate from official IDCreator output. AI Pro results are AI-generated candidates, not guaranteed official deterministic results.",
         "copy": {"productName": "HivisionIDPhotos Studio", "uploadCta": "Select portrait"},
-        "features": {"officialIdPhoto": True, "aiEnhancePreview": True, "wechatMiniappReady": True},
+        "features": {"officialIdPhoto": True, "aiEnhancePreview": True, "aiPro": True, "wechatMiniappReady": True},
         "defaults": {"templateId": DEFAULT_TEMPLATE_ID, "background": DEFAULT_BACKGROUND},
         "supportedBackgrounds": [
             {"id": key, "label": BACKGROUND_LABELS[key]} for key in supported_backgrounds()

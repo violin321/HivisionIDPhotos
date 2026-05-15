@@ -1,0 +1,130 @@
+from __future__ import annotations
+
+import base64
+import hashlib
+import os
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+import requests
+
+
+@dataclass(frozen=True)
+class AIProEngineConfig:
+    provider: str = "mock"
+    api_base: str = ""
+    api_key: str = ""
+    model: str = "gpt-image-2"
+    timeout_seconds: float = 45.0
+    retry_count: int = 0
+
+    @classmethod
+    def from_env(cls) -> "AIProEngineConfig":
+        provider = os.getenv("AI_PRO_PROVIDER") or os.getenv("GPT_IMAGE_PROVIDER") or "mock"
+        api_key = os.getenv("GPT_IMAGE_API_KEY") or os.getenv("OPENAI_API_KEY") or ""
+        api_base = os.getenv("GPT_IMAGE_API_BASE") or os.getenv("OPENAI_BASE_URL") or "https://api.openai.com/v1"
+        model = os.getenv("GPT_IMAGE_MODEL") or os.getenv("OPENAI_IMAGE_MODEL") or "gpt-image-2"
+        timeout = float(os.getenv("AI_PRO_TIMEOUT_SECONDS") or os.getenv("GPT_IMAGE_TIMEOUT") or os.getenv("OPENAI_IMAGE_TIMEOUT") or "45")
+        retry = max(0, min(1, int(os.getenv("AI_PRO_RETRY_COUNT") or "0")))
+        if not api_key:
+            provider = "mock"
+        return cls(provider=provider, api_base=api_base, api_key=api_key, model=model, timeout_seconds=timeout, retry_count=retry)
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.api_key and self.provider != "mock")
+
+
+@dataclass
+class AIProEngineResult:
+    status: str
+    image_path: Path | None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+class AIProEngine:
+    """Minimal AI Pro provider adapter.
+
+    Secrets are read only from environment and never exposed in metadata.
+    The concrete provider payload is intentionally OpenAI-compatible but configurable;
+    if credentials are absent or a provider call fails, callers can keep the free core result.
+    """
+
+    def __init__(self, config: AIProEngineConfig | None = None):
+        self.config = config or AIProEngineConfig.from_env()
+
+    def run_blue_formal_id_photo(self, *, input_path: Path, output_dir: Path, final_prompt: str, template_id: str, template_version: str) -> AIProEngineResult:
+        started = time.time()
+        prompt_hash = hashlib.sha256(final_prompt.encode("utf-8")).hexdigest()[:16]
+        base_metadata: dict[str, Any] = {
+            "mode": "ai_blue_formal_id_photo",
+            "provider": self.config.provider if self.config.configured else "mock",
+            "providerStatus": "configured" if self.config.configured else "no_credentials",
+            "model": self.config.model,
+            "templateId": template_id,
+            "templateVersion": template_version,
+            "inputSource": "freeResult",
+            "mock": not self.config.configured,
+            "fallback": not self.config.configured,
+            "finalPromptHash": prompt_hash,
+        }
+        output_dir.mkdir(parents=True, exist_ok=True)
+        if not self.config.configured:
+            base_metadata.update({"errorCode": "NO_CREDENTIALS", "durationMs": int((time.time() - started) * 1000)})
+            return AIProEngineResult(status="no_credentials", image_path=None, metadata=base_metadata)
+
+        last_error: str | None = None
+        for attempt in range(self.config.retry_count + 1):
+            try:
+                image_b64 = self._call_provider(input_path=input_path, prompt=final_prompt)
+                output_path = output_dir / "ai_blue_formal_id_photo.png"
+                output_path.write_bytes(base64.b64decode(self._strip_data_url(image_b64)))
+                base_metadata.update({"mock": False, "fallback": False, "durationMs": int((time.time() - started) * 1000)})
+                return AIProEngineResult(status="completed", image_path=output_path, metadata=base_metadata)
+            except requests.Timeout:
+                last_error = "PROVIDER_TIMEOUT"
+            except requests.RequestException:
+                last_error = "PROVIDER_HTTP_ERROR"
+            except Exception:
+                last_error = "PROVIDER_RESPONSE_ERROR"
+            if attempt < self.config.retry_count:
+                time.sleep(0.5)
+
+        base_metadata.update({"providerStatus": "error", "fallback": True, "errorCode": last_error or "PROVIDER_ERROR", "durationMs": int((time.time() - started) * 1000)})
+        return AIProEngineResult(status="fallback", image_path=None, metadata=base_metadata)
+
+    def _call_provider(self, *, input_path: Path, prompt: str) -> str:
+        payload = {
+            "model": self.config.model,
+            "prompt": prompt,
+            "images": [{"image_url": self._to_data_url(input_path)}],
+            "size": "1024x1024",
+            "response_format": "b64_json",
+        }
+        response = requests.post(
+            f"{self.config.api_base.rstrip('/')}/images/edits",
+            headers={"Authorization": f"Bearer {self.config.api_key}"},
+            json=payload,
+            timeout=self.config.timeout_seconds,
+        )
+        response.raise_for_status()
+        data = response.json()
+        for item in data.get("data") or []:
+            if isinstance(item, dict):
+                if item.get("b64_json"):
+                    return str(item["b64_json"])
+                if item.get("image_base64"):
+                    return str(item["image_base64"])
+        raise ValueError("provider response did not include image data")
+
+    @staticmethod
+    def _to_data_url(path: Path) -> str:
+        suffix = path.suffix.lower()
+        mime = "image/jpeg" if suffix in {".jpg", ".jpeg"} else "image/png"
+        return f"data:{mime};base64,{base64.b64encode(path.read_bytes()).decode('ascii')}"
+
+    @staticmethod
+    def _strip_data_url(value: str) -> str:
+        return value.split(",", 1)[1] if value.startswith("data:image") and "," in value else value
