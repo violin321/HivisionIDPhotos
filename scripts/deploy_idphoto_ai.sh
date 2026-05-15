@@ -12,6 +12,10 @@ EXTERNAL_URL="${EXTERNAL_URL:-https://idphoto-ai.violinai.qzz.io}"
 BROWSER_UA="${BROWSER_UA:-Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36}"
 HEALTH_TIMEOUT_SECONDS="${HEALTH_TIMEOUT_SECONDS:-45}"
 HEALTH_INTERVAL_SECONDS="${HEALTH_INTERVAL_SECONDS:-2}"
+AI_PRO_PROVIDER="${AI_PRO_PROVIDER:-mock}"
+GPT_IMAGE_API_BASE="${GPT_IMAGE_API_BASE:-}"
+GPT_IMAGE_MODEL="${GPT_IMAGE_MODEL:-gpt-image-2}"
+AI_PRO_TIMEOUT_SECONDS="${AI_PRO_TIMEOUT_SECONDS:-45}"
 
 DO_RESTART=1
 DO_EXTERNAL=1
@@ -38,6 +42,13 @@ Options:
 Environment overrides:
   PYTHON_BIN, API_SERVICE, WEB_SERVICE, API_LOCAL_URL, WEB_LOCAL_URL, EXTERNAL_URL,
   HEALTH_TIMEOUT_SECONDS, HEALTH_INTERVAL_SECONDS, BROWSER_UA
+
+AI Pro runtime env (optional; missing key is warning-only because fallback remains available):
+  AI_PRO_PROVIDER=metapi
+  GPT_IMAGE_API_BASE=http://127.0.0.1:4000/v1
+  GPT_IMAGE_MODEL=gpt-image-2
+  GPT_IMAGE_API_KEY=<set-in-runtime-only>
+  AI_PRO_TIMEOUT_SECONDS=45
 
 Important:
   This script restarts PM2 by process name only: `pm2 restart idphoto-ai-api` and
@@ -74,6 +85,24 @@ done
 
 require_cmd() {
   command -v "$1" >/dev/null 2>&1 || die "Required command not found: $1"
+}
+
+configured_or_missing() {
+  local value="${1:-}"
+  [[ -n "$value" ]] && printf configured || printf missing
+}
+
+check_ai_pro_env() {
+  log "AI Pro env check (secrets redacted; missing credentials are warning-only)"
+  log "AI_PRO_PROVIDER=${AI_PRO_PROVIDER:-mock}"
+  log "GPT_IMAGE_API_BASE=$(configured_or_missing "$GPT_IMAGE_API_BASE")"
+  log "GPT_IMAGE_MODEL=${GPT_IMAGE_MODEL:-gpt-image-2}"
+  log "AI_PRO_TIMEOUT_SECONDS=${AI_PRO_TIMEOUT_SECONDS:-45}"
+  if [[ -n "${GPT_IMAGE_API_KEY:-}" || -n "${OPENAI_API_KEY:-}" ]]; then
+    log "GPT_IMAGE_API_KEY=configured"
+  else
+    warn "GPT_IMAGE_API_KEY=missing; AI Pro will use no_credentials/mock fallback until the runtime env is configured."
+  fi
 }
 
 curl_status() {
@@ -183,6 +212,7 @@ check_external_best_effort() {
 
 main() {
   log "Deploy root: $ROOT_DIR"
+  check_ai_pro_env
   compile_python
   build_web
   prepare_standalone_static

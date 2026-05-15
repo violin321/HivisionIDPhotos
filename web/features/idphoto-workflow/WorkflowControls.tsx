@@ -50,9 +50,9 @@ const layoutPaperSizes = [
   { value: 'a4', label: 'A4 · 2479×3508' },
 ] as const;
 const aiProModes: Array<{ value: AiProMode; label: string; note: string }> = [
-  { value: 'ai_repair', label: 'AI 精修', note: 'mock：轻量修复预览' },
-  { value: 'ai_blue_formal_id_photo', label: 'AI 蓝底证件照', note: '候选结果，需按平台核验' },
-  { value: 'executive_headshot', label: '高端影棚肖像', note: '非正式证件用途' },
+  { value: 'ai_repair', label: 'AI 精修', note: 'fallback preview：轻量修复预览' },
+  { value: 'ai_blue_formal_id_photo', label: 'AI 蓝底证件照', note: '可走已配置 AI Pro provider；无凭证时 fallback' },
+  { value: 'executive_headshot', label: '高端影棚肖像', note: '非正式证件用途；当前 fallback preview' },
 ];
 const templateCategories = ['all', 'common', 'exam', 'visa', 'credential'] as const;
 type TemplateCategory = (typeof templateCategories)[number];
@@ -316,9 +316,9 @@ export function WorkflowControls({
       <div className="mt-4 rounded-[18px] border border-amber/25 bg-paper/60 p-4 text-graphite">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <p className="font-mono text-[10px] uppercase tracking-[0.26em] text-amber">AI PRO · MOCK</p>
+            <p className="font-mono text-[10px] uppercase tracking-[0.26em] text-amber">AI PRO · PROVIDER/FALLBACK</p>
             <h4 className="mt-1 font-semibold">上传时预选 AI Pro</h4>
-            <p className="mt-1 text-xs leading-5 text-slate">当前只生成 mock preview，不调用外部 AI API，也不产生真实支付。</p>
+            <p className="mt-1 text-xs leading-5 text-slate">AI 蓝底证件照会在后端尝试已配置 provider；无凭证或失败时显示 no_credentials / fallback，不影响官方结果。当前不产生真实支付。</p>
           </div>
           <label className="flex cursor-pointer items-center gap-2 text-xs text-slate">
             <input
@@ -329,7 +329,7 @@ export function WorkflowControls({
                 onTaskOptionsChange({
                   aiPro: {
                     enabled,
-                    modes: enabled ? (taskOptions.aiPro?.modes?.length ? taskOptions.aiPro.modes : ['ai_repair']) : [],
+                    modes: enabled ? (taskOptions.aiPro?.modes?.length ? taskOptions.aiPro.modes : ['ai_blue_formal_id_photo']) : [],
                     promptParams: taskOptions.aiPro?.promptParams ?? { outfit: '深色西装/白衬衫', backgroundColor: selectedBackground, style: 'natural', retouchLevel: 'medium' },
                     consentAccepted: enabled ? Boolean(taskOptions.aiPro?.consentAccepted) : false,
                   },
@@ -376,7 +376,7 @@ export function WorkflowControls({
             </div>
             <label className="flex items-start gap-2 rounded-2xl border border-dashed border-amber/35 bg-amber/5 px-3 py-3 text-xs leading-5 text-slate">
               <input type="checkbox" checked={Boolean(taskOptions.aiPro.consentAccepted)} onChange={(event) => onTaskOptionsChange({ aiPro: { ...taskOptions.aiPro!, consentAccepted: event.target.checked } })} className="mt-1 accent-amber" />
-              我同意将图片用于 AI Pro 生成；当前为 mock，但未来可能上传第三方 AI 服务。
+              我同意将图片用于 AI Pro 生成；若服务端配置了 provider，图片会提交到运行环境配置的第三方 AI 服务；否则使用 fallback。
             </label>
           </div>
         ) : null}

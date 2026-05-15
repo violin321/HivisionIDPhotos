@@ -179,17 +179,19 @@ export function ResultPanel({ task, template, selectedBackground }: ResultPanelP
             {proResults.map((item) => {
               const title = item.mode === 'ai_repair' ? 'AI 精修' : item.mode === 'ai_blue_formal_id_photo' ? 'AI 蓝底证件照' : '高端影棚肖像';
               const providerStatus = String(item.promptMetadata?.providerStatus ?? item.status);
-              const isMock = item.mock !== false;
+              const fallback = item.promptMetadata?.fallback !== false;
+              const isRealProviderResult = item.mock === false && !fallback && providerStatus === 'configured';
+              const isMock = !isRealProviderResult;
               const warning = providerStatus === 'no_credentials'
-                ? 'AI provider 未配置，当前为 mock preview'
-                : isMock
-                  ? '当前为 mock / fallback preview，不代表最终付费生成质量'
-                  : '真实 AI Pro 生成候选，需按提交平台要求核验';
+                ? 'AI provider 未配置：当前展示 no_credentials fallback，不影响官方结果'
+                : isRealProviderResult
+                  ? '真实 AI Pro provider 生成候选，需按提交平台要求核验'
+                  : '当前为 fallback preview，不代表最终付费生成质量';
               return (
                 <div key={`${item.mode}-${item.promptTemplateId}`} className={`rounded-[18px] border p-3 ${isMock ? 'border-amber/25 bg-paper/70' : 'border-measurement/30 bg-measurement/10'}`}>
                   <div className="flex items-start justify-between gap-2">
                     <p className="font-semibold text-ink">{title}</p>
-                    <span className={`rounded-full border px-2 py-0.5 font-mono text-[10px] ${isMock ? 'border-amber/35 text-amber' : 'border-measurement/35 text-measurement'}`}>{isMock ? providerStatus : 'real_ai'}</span>
+                    <span className={`rounded-full border px-2 py-0.5 font-mono text-[10px] ${isMock ? 'border-amber/35 text-amber' : 'border-measurement/35 text-measurement'}`}>{isRealProviderResult ? 'real_provider' : providerStatus}</span>
                   </div>
                   <p className="mt-1 text-xs text-slate">{warning}</p>
                   <dl className="mt-2 space-y-1 text-xs text-slate">
@@ -197,6 +199,8 @@ export function ResultPanel({ task, template, selectedBackground }: ResultPanelP
                     <div><dt className="inline">usage</dt><dd className="ml-2 inline font-mono text-ink">{item.usageLabel}</dd></div>
                     <div><dt className="inline">template</dt><dd className="ml-2 inline font-mono text-ink">{item.promptTemplateId}@{item.templateVersion}</dd></div>
                     <div><dt className="inline">provider</dt><dd className="ml-2 inline font-mono text-ink">{String(item.promptMetadata?.provider ?? 'mock')}</dd></div>
+                    <div><dt className="inline">providerStatus</dt><dd className="ml-2 inline font-mono text-ink">{providerStatus}</dd></div>
+                    <div><dt className="inline">result</dt><dd className="ml-2 inline font-mono text-ink">{isRealProviderResult ? 'real result' : 'fallback'}</dd></div>
                     <div><dt className="inline">input</dt><dd className="ml-2 inline font-mono text-ink">{String(item.promptMetadata?.inputSource ?? 'freeResult')}</dd></div>
                     <div><dt className="inline">paid</dt><dd className="ml-2 inline font-mono text-ink">{item.paid ? 'yes' : 'no'}</dd></div>
                   </dl>

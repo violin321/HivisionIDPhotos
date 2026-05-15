@@ -165,6 +165,7 @@ export interface TaskCreateInput {
   platform: Platform;
   aiMode: AiMode;
   options?: TaskOptions;
+  aiPro?: AiProRequest;
 }
 
 export interface IdPhotoTemplate {
@@ -297,7 +298,7 @@ export const config: StudioConfig = {
     allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp'],
     allowedExtensions: ['.jpg', '.jpeg', '.png', '.webp'],
   },
-  aiDisclaimer: 'AI enhance is optional and visually separated from official ID photo output.',
+  aiDisclaimer: 'AI enhance / AI Pro are optional and visually separated from official ID photo output. AI Pro may use provider or fallback depending on server credentials.',
   copy: { productName: 'HivisionIDPhotos Studio', uploadCta: 'Select portrait' },
   features: { officialIdPhoto: true, aiEnhancePreview: true, aiPro: true, wechatMiniappReady: true },
 };
@@ -317,7 +318,7 @@ async function mockCreateTask(input: TaskCreateInput): Promise<ProcessingTask> {
   await wait(240);
   const background = (input.options?.background ?? 'white') as BackgroundColor;
   const renderAiEnhancePreview = input.aiMode === 'preview' || input.aiMode === 'enhance';
-  const aiPro = input.options?.aiPro;
+  const aiPro = input.aiPro ?? input.options?.aiPro;
   return {
     taskId: `task_mock_${stamp()}`,
     status: 'queued',
@@ -392,7 +393,7 @@ async function mockGetTask(task: ProcessingTask, tick: number): Promise<Processi
       },
       mock: true,
     })) : [],
-    stages: { core: { status: 'completed' }, aiPro: { status: task.aiPro?.enabled ? 'mock_completed' : 'skipped' } },
+    stages: { core: { status: 'completed' }, aiPro: { status: task.aiPro?.enabled ? 'fallback' : 'skipped' } },
     qualityReport: {
       score: 92,
       passed: true,
