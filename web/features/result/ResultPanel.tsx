@@ -170,25 +170,40 @@ export function ResultPanel({ task, template, selectedBackground }: ResultPanelP
         <div className="mt-5 rounded-[20px] border border-amber/30 bg-amber/10 p-4 text-sm leading-6 text-graphite">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <p className="font-semibold text-ink">AI Pro 结果区 · mock preview</p>
-              <p className="text-xs text-slate">当前复用免费结果预览，不调用真实 AI，不代表最终付费生成质量。</p>
+              <p className="font-semibold text-ink">AI Pro 结果区</p>
+              <p className="text-xs text-slate">AI Pro 与官方 IDCreator 结果分离展示；AI 结果仅作候选，需按提交平台要求人工核验。</p>
             </div>
-            <span className="rounded-full border border-amber/40 bg-paper/70 px-3 py-1 font-mono text-[10px] text-amber">MOCK</span>
+            <span className="rounded-full border border-amber/40 bg-paper/70 px-3 py-1 font-mono text-[10px] text-amber">{String((task?.stages?.aiPro as { status?: string } | undefined)?.status ?? 'queued')}</span>
           </div>
           <div className="mt-3 grid gap-3 md:grid-cols-3">
             {proResults.map((item) => {
               const title = item.mode === 'ai_repair' ? 'AI 精修' : item.mode === 'ai_blue_formal_id_photo' ? 'AI 蓝底证件照' : '高端影棚肖像';
-              const warning = item.mode === 'executive_headshot' ? 'AI 形象照 / 非正式证件用途' : item.mode === 'ai_blue_formal_id_photo' ? 'AI 增强证件照候选，需按提交平台要求核验' : 'AI 精修预览，mock 结果';
+              const providerStatus = String(item.promptMetadata?.providerStatus ?? item.status);
+              const isMock = item.mock !== false;
+              const warning = providerStatus === 'no_credentials'
+                ? 'AI provider 未配置，当前为 mock preview'
+                : isMock
+                  ? '当前为 mock / fallback preview，不代表最终付费生成质量'
+                  : '真实 AI Pro 生成候选，需按提交平台要求核验';
               return (
-                <div key={`${item.mode}-${item.promptTemplateId}`} className="rounded-[18px] border border-ink/10 bg-paper/70 p-3">
-                  <p className="font-semibold text-ink">{title}</p>
+                <div key={`${item.mode}-${item.promptTemplateId}`} className={`rounded-[18px] border p-3 ${isMock ? 'border-amber/25 bg-paper/70' : 'border-measurement/30 bg-measurement/10'}`}>
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="font-semibold text-ink">{title}</p>
+                    <span className={`rounded-full border px-2 py-0.5 font-mono text-[10px] ${isMock ? 'border-amber/35 text-amber' : 'border-measurement/35 text-measurement'}`}>{isMock ? providerStatus : 'real_ai'}</span>
+                  </div>
                   <p className="mt-1 text-xs text-slate">{warning}</p>
                   <dl className="mt-2 space-y-1 text-xs text-slate">
+                    <div><dt className="inline">status</dt><dd className="ml-2 inline font-mono text-ink">{item.status}</dd></div>
                     <div><dt className="inline">usage</dt><dd className="ml-2 inline font-mono text-ink">{item.usageLabel}</dd></div>
                     <div><dt className="inline">template</dt><dd className="ml-2 inline font-mono text-ink">{item.promptTemplateId}@{item.templateVersion}</dd></div>
+                    <div><dt className="inline">provider</dt><dd className="ml-2 inline font-mono text-ink">{String(item.promptMetadata?.provider ?? 'mock')}</dd></div>
+                    <div><dt className="inline">input</dt><dd className="ml-2 inline font-mono text-ink">{String(item.promptMetadata?.inputSource ?? 'freeResult')}</dd></div>
                     <div><dt className="inline">paid</dt><dd className="ml-2 inline font-mono text-ink">{item.paid ? 'yes' : 'no'}</dd></div>
                   </dl>
-                  {item.previewUrl ? <a href={item.previewUrl} className="mt-3 inline-block rounded-xl bg-ink px-3 py-2 text-xs font-semibold text-porcelain">打开 mock preview</a> : null}
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {item.previewUrl ? <a href={item.previewUrl} className="inline-block rounded-xl bg-ink px-3 py-2 text-xs font-semibold text-porcelain">打开预览</a> : null}
+                    {item.downloadUrl ? <a href={item.downloadUrl} className="inline-block rounded-xl border border-ink/15 px-3 py-2 text-xs font-semibold text-ink">下载</a> : null}
+                  </div>
                 </div>
               );
             })}
