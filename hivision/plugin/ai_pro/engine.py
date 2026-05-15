@@ -96,19 +96,19 @@ class AIProEngine:
         return AIProEngineResult(status="fallback", image_path=None, metadata=base_metadata)
 
     def _call_provider(self, *, input_path: Path, prompt: str) -> str:
-        payload = {
-            "model": self.config.model,
-            "prompt": prompt,
-            "images": [{"image_url": self._to_data_url(input_path)}],
-            "size": "1024x1024",
-            "response_format": "b64_json",
-        }
-        response = requests.post(
-            f"{self.config.api_base.rstrip('/')}/images/edits",
-            headers={"Authorization": f"Bearer {self.config.api_key}"},
-            json=payload,
-            timeout=self.config.timeout_seconds,
-        )
+        with input_path.open("rb") as image_file:
+            response = requests.post(
+                f"{self.config.api_base.rstrip('/')}/images/edits",
+                headers={"Authorization": f"Bearer {self.config.api_key}"},
+                data={
+                    "model": self.config.model,
+                    "prompt": prompt,
+                    "size": "1024x1024",
+                    "response_format": "b64_json",
+                },
+                files={"image": (input_path.name, image_file, self._mime_type(input_path))},
+                timeout=self.config.timeout_seconds,
+            )
         response.raise_for_status()
         data = response.json()
         for item in data.get("data") or []:
@@ -117,7 +117,23 @@ class AIProEngine:
                     return str(item["b64_json"])
                 if item.get("image_base64"):
                     return str(item["image_base64"])
+                if item.get("url"):
+                    return self._download_image_b64(str(item["url"]))
         raise ValueError("provider response did not include image data")
+
+    def _download_image_b64(self, url: str) -> str:
+        response = requests.get(url, timeout=self.config.timeout_seconds)
+        response.raise_for_status()
+        return base64.b64encode(response.content).decode("ascii")
+
+    @staticmethod
+    def _mime_type(path: Path) -> str:
+        suffix = path.suffix.lower()
+        if suffix in {".jpg", ".jpeg"}:
+            return "image/jpeg"
+        if suffix == ".webp":
+            return "image/webp"
+        return "image/png"
 
     @staticmethod
     def _to_data_url(path: Path) -> str:
