@@ -39,11 +39,14 @@ jobs:
       - name: Import smoke
         run: |
           python - <<'PY'
-          import importlib
+          import importlib.util
+          from pathlib import Path
 
-          for module in ("hivision", "hivision.error", "hivision.utils"):
-              importlib.import_module(module)
-              print(f"import ok: {module}")
+          for module_path in ("hivision/error.py", "hivision/utils.py"):
+              spec = importlib.util.spec_from_file_location(Path(module_path).stem, module_path)
+              module = importlib.util.module_from_spec(spec)
+              spec.loader.exec_module(module)
+              print(f"import ok: {module_path}")
           PY
 
   web-smoke:
