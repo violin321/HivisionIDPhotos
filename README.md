@@ -52,6 +52,22 @@
 
 <br>
 
+## Phase 4 Web v2 / FastAPI adapter
+
+Phase 4 adds a deployable Web v2 + FastAPI task workflow without replacing the existing Gradio site. See `docs/phase4-deploy.md` for production notes targeting `https://idphoto-ai.violinai.qzz.io`.
+
+Phase 5A hardens the public workflow with application-level upload validation, runtime TTL cleanup, and Basic Auth capable e2e checks. See `docs/phase5A-hardening.md`.
+
+Quick local API contract check:
+
+```bash
+.venv/bin/python -m py_compile deploy_api.py
+./scripts/run_phase4_local.sh
+```
+
+Web v2 uses `NEXT_PUBLIC_API_BASE_URL` to call the FastAPI adapter. `officialResult` remains deterministic Hivision/IDCreator output; the optional AI preview is only `local-derived-preview` and does not call GPT-image-2 or require provider keys.
+
+
 # 🤩 最近更新
 
 - 在线体验： [![Spaces](https://img.shields.io/badge/🤗-Open%20in%20Spaces-blue)](https://huggingface.co/spaces/TheEeeeLin/HivisionIDPhotos)、[![][modelscope-shield]][modelscope-link]、[![][modelers-shield]][modelers-link]、[![][compshare-shield]][compshare-link]
@@ -506,3 +522,14 @@ This repository is licensed under the [Apache-2.0 License](LICENSE).
 [community-hivision-cpp]: https://github.com/zjkhahah/HivisionIDPhotos-cpp
 [community-hivision-windows-gui]: https://github.com/zhaoyun0071/HivisionIDPhotos-windows-GUI
 [community-hivision-nas]: https://github.com/ONG-Leo/HivisionIDPhotos-NAS
+
+## Frontend v2 Phase 0/1 scaffold
+
+A multi-platform frontend foundation is available on branch `feat/frontend-v2`.
+
+- API contract: `api/contract.md`
+- Shared lightweight layer: `packages/shared/src/`
+- Web v2 scaffold: `web/`
+- Notes: `docs/frontend-v2.md`
+
+The scaffold keeps the existing Gradio UI and formal ID photo processing flow intact. It uses mock data only, documents a miniapp-compatible upload/task API, and keeps optional AI enhance output separate from official ID photo results. Provider API keys and GPT-image-2 access must remain server-side only.

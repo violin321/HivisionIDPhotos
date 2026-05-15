@@ -1,0 +1,8 @@
+[Unit]
+Description=Clean expired idphoto-ai runtime artifacts
+
+[Service]
+Type=oneshot
+WorkingDirectory=/root/.openclaw/workspace-programmer/HivisionIDPhotos
+Environment=IDPHOTO_SKIP_STARTUP_CLEANUP=1
+ExecStart=/root/.openclaw/workspace-programmer/HivisionIDPhotos/.venv/bin/python scripts/cleanup_runtime.py --json
