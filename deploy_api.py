@@ -415,6 +415,59 @@ def build_template_specs() -> dict[str, dict[str, Any]]:
 # of keeping a reduced hard-coded subset.
 TEMPLATE_SPECS: dict[str, dict[str, Any]] = build_template_specs()
 
+AI_PRO_SUPPORTED_MODES = {"ai_repair", "ai_blue_formal_id_photo", "executive_headshot"}
+AI_PRO_MODE_TEMPLATE = {
+    "ai_repair": "ai_repair_basic",
+    "ai_blue_formal_id_photo": "ai_blue_formal_id_photo",
+    "executive_headshot": "executive_headshot_apple_style",
+}
+PROMPT_TEMPLATE_REGISTRY: dict[str, dict[str, Any]] = {
+    "executive_headshot_apple_style": {
+        "id": "executive_headshot_apple_style",
+        "version": "2026-05-phase1",
+        "mode": "executive_headshot",
+        "status": "mock",
+        "creditCost": 3,
+        "usageLabel": "non_official_portrait",
+        "userParamsSchema": {"outfit": "string", "expression": "string", "style": "string", "retouchLevel": "low|medium|high"},
+        "promptMetadata": {"styleFamily": "executive studio portrait", "officialUse": False, "warning": "AI 形象照 / 非正式证件用途"},
+    },
+    "ai_blue_formal_id_photo": {
+        "id": "ai_blue_formal_id_photo",
+        "version": "2026-05-phase1",
+        "mode": "ai_blue_formal_id_photo",
+        "status": "mock",
+        "creditCost": 2,
+        "usageLabel": "official_candidate",
+        "userParamsSchema": {"backgroundColor": "blue", "outfit": "string", "expression": "string", "retouchLevel": "low|medium|high"},
+        "promptMetadata": {"background": "blue", "outfitBaseline": "dark suit, white shirt", "cameraTexture": "Canon 5D-like", "warning": "AI 增强证件照候选，需按提交平台要求核验"},
+    },
+    "cn_blue_480x640_20_40kb": {
+        "id": "cn_blue_480x640_20_40kb",
+        "version": "2026-05-phase1",
+        "mode": "ai_blue_formal_id_photo",
+        "status": "spec_profile",
+        "creditCost": 0,
+        "usageLabel": "official_candidate",
+        "userParamsSchema": {"outputSpec": "480x640", "backgroundColor": "blue"},
+        "promptMetadata": {
+            "specProfile": {"width": 480, "height": 640, "dpi": 300, "fileKbRange": [20, 40], "backgroundColor": "blue"},
+            "qualityRules": ["single frontal face", "plain blue background", "verify platform file-size constraints"],
+        },
+    },
+    "ai_repair_basic": {
+        "id": "ai_repair_basic",
+        "version": "2026-05-phase1",
+        "mode": "ai_repair",
+        "status": "mock",
+        "creditCost": 1,
+        "usageLabel": "preview_repair",
+        "userParamsSchema": {"retouchLevel": "low|medium|high", "style": "natural"},
+        "promptMetadata": {"operation": "local mock repair preview", "officialUse": False},
+    },
+}
+
+
 # add_background() and save_image_dpi_to_bytes() both operate on RGB-like
 # channel order in this project path despite the legacy parameter name being
 # `bgr`. Keep the web presets aligned with demo/processor.py's HEX handling.
@@ -1087,9 +1140,51 @@ def make_ai_preview_from_official(official_image: np.ndarray, output_path: Path,
     write_png(preview, output_path, dpi)
 
 
+
+def normalize_ai_pro_request(ai_pro: Any) -> dict[str, Any]:
+    requested_modes = [str(mode) for mode in (ai_pro.modes or []) if str(mode) in AI_PRO_SUPPORTED_MODES]
+    if ai_pro.enabled and not requested_modes:
+        requested_modes = ["ai_repair"]
+    return {
+        "enabled": bool(ai_pro.enabled),
+        "modes": requested_modes,
+        "promptParams": dict(ai_pro.promptParams or {}),
+        "consentAccepted": bool(ai_pro.consentAccepted),
+    }
+
+
+def build_ai_pro_mock_results(task_id: str, free_result: dict[str, Any] | None, ai_pro: dict[str, Any], quality_report: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not ai_pro.get("enabled"):
+        return []
+    preview_url = (free_result or {}).get("previewUrl")
+    results: list[dict[str, Any]] = []
+    for mode in ai_pro.get("modes", []):
+        template = PROMPT_TEMPLATE_REGISTRY[AI_PRO_MODE_TEMPLATE.get(mode, "ai_repair_basic")]
+        metadata = dict(template.get("promptMetadata", {}))
+        metadata["mockSource"] = "freeResult"
+        metadata["selectedParams"] = ai_pro.get("promptParams", {})
+        if mode == "ai_blue_formal_id_photo":
+            metadata["specProfile"] = PROMPT_TEMPLATE_REGISTRY["cn_blue_480x640_20_40kb"]["promptMetadata"].get("specProfile")
+            metadata["qualityRules"] = PROMPT_TEMPLATE_REGISTRY["cn_blue_480x640_20_40kb"]["promptMetadata"].get("qualityRules")
+        results.append({
+            "mode": mode,
+            "status": "mock_completed",
+            "imageUrl": preview_url,
+            "previewUrl": preview_url,
+            "usageLabel": template["usageLabel"],
+            "promptTemplateId": template["id"],
+            "templateVersion": template["version"],
+            "paid": False,
+            "qualityReport": {"source": "core_quality_report", "corePassed": bool((quality_report or {}).get("passed")), "mock": True},
+            "promptMetadata": metadata,
+            "mock": True,
+        })
+    return results
+
 def run_idcreator_task(task_id: str) -> None:
     task = TASKS[task_id]
     task["status"] = "processing"
+    task.setdefault("stages", {})["core"] = {"status": "processing"}
     persist_tasks()
     started = time.time()
 
@@ -1134,7 +1229,9 @@ def run_idcreator_task(task_id: str) -> None:
         else:
             write_png(official_rgb, result_dir / official_name, spec["dpi"])
         task["officialResult"] = build_result_file(task_id, "official", official_name)
+        task["freeResult"] = task["officialResult"]
         task["qualityReport"] = build_quality_report(result, official_rgb, spec, background_rgb)
+        task.setdefault("stages", {})["core"] = {"status": "completed", "engine": "IDCreator"}
         task.pop("warning", None)
         task.pop("warnings", None)
 
@@ -1187,10 +1284,20 @@ def run_idcreator_task(task_id: str) -> None:
                 logger.exception("[API] target KB derivative failed: task_id=%s", task_id)
                 add_task_warning(task, "COMPRESSED_RESULT_FAILED", f"Target KB result could not be generated: {exc}")
 
+        ai_pro = task.get("aiPro") or {"enabled": False, "modes": [], "promptParams": {}, "consentAccepted": False}
+        if ai_pro.get("enabled"):
+            task["proResults"] = build_ai_pro_mock_results(task_id, task.get("freeResult"), ai_pro, task.get("qualityReport"))
+            task.setdefault("stages", {})["aiPro"] = {"status": "mock_completed", "modes": ai_pro.get("modes", []), "paid": False}
+        else:
+            task["proResults"] = []
+            task.setdefault("stages", {})["aiPro"] = {"status": "skipped"}
+
         task["status"] = "succeeded"
         task.pop("error", None)
     except FaceError as err:
         logger.exception("[API] IDCreator task failed: task_id=%s face_num=%s", task_id, getattr(err, "face_num", None))
+        task.setdefault("stages", {})["core"] = {"status": "failed"}
+        task.setdefault("stages", {})["core"] = {"status": "failed"}
         task["status"] = "failed"
         task["error"] = {
             "code": "FACE_DETECTION_FAILED",
@@ -1232,12 +1339,34 @@ class ResultFile(BaseModel):
     expiresAt: str
 
 
+class AiProRequest(BaseModel):
+    enabled: bool = False
+    modes: list[str] = Field(default_factory=list)
+    promptParams: dict[str, Any] = Field(default_factory=dict)
+    consentAccepted: bool = False
+
+
+class AiProResult(BaseModel):
+    mode: str
+    status: str
+    imageUrl: str | None = None
+    previewUrl: str | None = None
+    usageLabel: str
+    promptTemplateId: str
+    templateVersion: str
+    paid: bool = False
+    qualityReport: dict[str, Any] | None = None
+    promptMetadata: dict[str, Any] = Field(default_factory=dict)
+    mock: bool = True
+
+
 class TaskCreateRequest(BaseModel):
     uploadId: str
     templateId: str
     platform: Platform = "web"
     aiMode: AiMode = "none"
     options: dict[str, Any] = Field(default_factory=dict)
+    aiPro: AiProRequest = Field(default_factory=AiProRequest)
 
 
 class LoginRequest(BaseModel):
@@ -1255,6 +1384,10 @@ class ProcessingTask(BaseModel):
     options: dict[str, Any]
     officialResult: ResultFile | None = None
     aiEnhanceResult: ResultFile | None = None
+    freeResult: ResultFile | None = None
+    proResults: list[AiProResult] = Field(default_factory=list)
+    stages: dict[str, Any] = Field(default_factory=dict)
+    aiPro: AiProRequest | None = None
     layoutResult: ResultFile | None = None
     watermarkedResult: ResultFile | None = None
     compressedResult: ResultFile | None = None
@@ -1343,6 +1476,7 @@ async def api_templates(_session: dict[str, Any] = Depends(require_auth)):
 @app.get("/api/config")
 async def api_config(_session: dict[str, Any] = Depends(require_auth)):
     return {
+        "aiProTemplates": list(PROMPT_TEMPLATE_REGISTRY.values()),
         "consent": {
             "required": True,
             "title": "Photo processing consent",
@@ -1432,6 +1566,9 @@ async def api_create_task(request: Request, payload: TaskCreateRequest, backgrou
 
         template_id = validate_template_id(payload.templateId)
         task_options = dict(payload.options)
+        ai_pro = normalize_ai_pro_request(payload.aiPro)
+        if ai_pro["enabled"] and not ai_pro["consentAccepted"]:
+            raise HTTPException(status_code=400, detail=error_detail("AI_PRO_CONSENT_REQUIRED", "AI Pro requires explicit consent before mock generation.", retryable=False))
         background, background_rgb = resolve_background_rgb(task_options)
         normalize_render_mode(task_options.get("renderMode"))
         plugin_flags = normalize_plugin_flags(task_options)
@@ -1466,6 +1603,10 @@ async def api_create_task(request: Request, payload: TaskCreateRequest, backgrou
             "platform": payload.platform,
             "aiMode": payload.aiMode,
             "options": task_options,
+            "aiPro": ai_pro,
+            "freeResult": None,
+            "proResults": [],
+            "stages": {"core": {"status": "queued"}, "aiPro": {"status": "queued" if ai_pro["enabled"] else "skipped"}},
             "createdAt": time.time(),
         }
         TASKS[task_id] = task
