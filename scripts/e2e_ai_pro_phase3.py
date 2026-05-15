@@ -101,6 +101,23 @@ def create_task(base_url: str, upload_id: str, cookie: str, *, ai_pro: dict | No
     return task
 
 
+def assert_real_provider_result(task: dict, pro: dict) -> None:
+    metadata = pro.get("promptMetadata") or {}
+    failures = []
+    if pro.get("status") != "completed":
+        failures.append(f"status={pro.get('status')!r}")
+    if pro.get("mock") is not False or metadata.get("mock") is not False:
+        failures.append(f"mock pro={pro.get('mock')!r} metadata={metadata.get('mock')!r}")
+    if metadata.get("fallback") is not False:
+        failures.append(f"fallback={metadata.get('fallback')!r}")
+    if metadata.get("providerStatus") != "configured":
+        failures.append(f"providerStatus={metadata.get('providerStatus')!r}")
+    if not pro.get("previewUrl") or not pro.get("downloadUrl"):
+        failures.append("missing previewUrl/downloadUrl")
+    if failures:
+        raise SystemExit(f"real provider invariant failed: {', '.join(failures)} taskId={task.get('taskId')}")
+
+
 def wait_task(base_url: str, task_id: str, cookie: str, timeout: float) -> dict:
     deadline = time.time() + timeout
     task = {}
@@ -117,6 +134,8 @@ def main() -> int:
     parser.add_argument("--base-url", default=os.environ.get("API_BASE_URL", "http://127.0.0.1:8000"))
     parser.add_argument("--image", default="demo/images/test0.jpg")
     parser.add_argument("--timeout", type=float, default=180.0)
+    parser.add_argument("--mode", default="ai_blue_formal_id_photo", choices=["ai_blue_formal_id_photo"], help="AI Pro mode to request for the provider smoke path")
+    parser.add_argument("--expect-real-provider", action="store_true", help="Require AI Pro provider output instead of fallback/mock metadata")
     args = parser.parse_args()
 
     base_url = args.base_url.rstrip("/")
@@ -145,7 +164,7 @@ def main() -> int:
     upload = multipart_upload(base_url, image_path, cookie)
     task = wait_task(base_url, create_task(base_url, upload["uploadId"], cookie, ai_pro={
         "enabled": True,
-        "modes": ["ai_blue_formal_id_photo"],
+        "modes": [args.mode],
         "promptParams": {"backgroundColor": "blue", "outfit": "深色西装/白衬衫", "retouchLevel": "medium"},
         "consentAccepted": True,
     })["taskId"], cookie, args.timeout)
@@ -157,16 +176,24 @@ def main() -> int:
     metadata = pro.get("promptMetadata") or {}
     if "finalPromptHash" not in metadata or "inputSource" not in metadata:
         raise SystemExit(f"AI Pro metadata incomplete: {json.dumps(pro, ensure_ascii=False)}")
+    if args.expect_real_provider:
+        assert_real_provider_result(task, pro)
 
     print(json.dumps({
         "ok": True,
         "baseUrl": base_url,
         "noAiTaskId": task["taskId"],
+        "aiProTaskId": task["taskId"],
         "aiProStatus": pro.get("status"),
         "providerStatus": metadata.get("providerStatus"),
+        "provider": metadata.get("provider"),
+        "model": metadata.get("model"),
         "mock": pro.get("mock"),
+        "fallback": metadata.get("fallback"),
         "inputSource": metadata.get("inputSource"),
         "finalPromptHash": metadata.get("finalPromptHash"),
+        "previewUrl": pro.get("previewUrl"),
+        "downloadUrl": pro.get("downloadUrl"),
     }, ensure_ascii=False, indent=2))
     return 0
 
