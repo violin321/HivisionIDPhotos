@@ -20,6 +20,38 @@
   --panel-shadow: rgba(18, 20, 23, .16);
 }
 
+:root[data-theme-preset='warm-paper'] {
+  --font-display: 'Iowan Old Style', Georgia, serif;
+  --ink: #211811;
+  --graphite: #493a2c;
+  --slate: #826f5d;
+  --paper: #f5ead8;
+  --porcelain: #fff8ea;
+  --line: #dfc9aa;
+  --measurement: #9b5f29;
+  --amber: #b15c35;
+  --grid-strong: rgba(73,58,44,.055);
+  --grid-soft: rgba(73,58,44,.038);
+  --warm-glow: rgba(177,92,53,.18);
+  --panel-shadow: rgba(73, 58, 44, .18);
+}
+
+:root[data-theme-preset='darkroom'] {
+  --font-display: 'Didot', Georgia, serif;
+  --ink: #f2eadc;
+  --graphite: #d7cbbb;
+  --slate: #9f9284;
+  --paper: #15100e;
+  --porcelain: #211916;
+  --line: #4a3831;
+  --measurement: #d65f45;
+  --amber: #d8a24f;
+  --grid-strong: rgba(242,234,220,.05);
+  --grid-soft: rgba(242,234,220,.035);
+  --warm-glow: rgba(214,95,69,.18);
+  --panel-shadow: rgba(0, 0, 0, .52);
+}
+
 :root[data-theme='dark'] {
   --ink: #f5f1e8;
   --graphite: #d6d0c4;
@@ -35,6 +67,30 @@
   --panel-shadow: rgba(0, 0, 0, .42);
 }
 
+:root[data-theme='dark'][data-theme-preset='warm-paper'] {
+  --ink: #f6ebd8;
+  --graphite: #d7c4aa;
+  --slate: #ab967a;
+  --paper: #18110b;
+  --porcelain: #241a12;
+  --line: #4d3a27;
+  --measurement: #d99954;
+  --amber: #e2704c;
+  --warm-glow: rgba(226,112,76,.16);
+}
+
+:root[data-theme='dark'][data-theme-preset='darkroom'] {
+  --ink: #fff3dc;
+  --graphite: #d8c7b0;
+  --slate: #a69076;
+  --paper: #0a0706;
+  --porcelain: #17100e;
+  --line: #3b2a25;
+  --measurement: #ff694d;
+  --amber: #f0b35b;
+  --warm-glow: rgba(255,105,77,.2);
+}
+
 * { box-sizing: border-box; }
 html { background: var(--paper); }
 body {
@@ -46,6 +102,7 @@ body {
     radial-gradient(circle at 12% 8%, var(--warm-glow), transparent 34%),
     linear-gradient(135deg, var(--porcelain) 0%, var(--paper) 54%, color-mix(in srgb, var(--paper) 86%, var(--line)) 100%);
   font-family: var(--font-body);
+  overflow-x: hidden;
   transition: background-color .2s ease, color .2s ease;
 }
 
@@ -60,4 +117,18 @@ body {
   background: color-mix(in srgb, var(--porcelain) 78%, transparent);
   box-shadow: 0 28px 80px var(--panel-shadow);
   backdrop-filter: blur(18px);
+}
+
+summary::-webkit-details-marker {
+  display: none;
+}
+
+@media (max-width: 767px) {
+  body {
+    background:
+      linear-gradient(90deg, var(--grid-strong) 1px, transparent 1px) 0 0 / 28px 28px,
+      linear-gradient(var(--grid-soft) 1px, transparent 1px) 0 0 / 28px 28px,
+      radial-gradient(circle at 12% 8%, var(--warm-glow), transparent 28%),
+      linear-gradient(135deg, var(--porcelain) 0%, var(--paper) 54%, color-mix(in srgb, var(--paper) 86%, var(--line)) 100%);
+  }
 }

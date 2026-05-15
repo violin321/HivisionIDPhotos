@@ -6,6 +6,27 @@ export type TaskStatus = 'queued' | 'processing' | 'succeeded' | 'failed' | 'exp
 export type Platform = 'web' | 'mobileWeb' | 'wechatMiniapp';
 export type AiMode = 'none' | 'preview' | 'enhance';
 export type BackgroundColor = 'white' | 'blue' | 'red' | 'gray';
+export type TaskBackgroundColor = BackgroundColor | 'custom';
+export type QualityIssueSeverity = 'warning' | 'error';
+
+export interface QualityIssue {
+  code: string;
+  message: string;
+  severity?: QualityIssueSeverity;
+  metric?: string;
+}
+
+export interface QualityReport {
+  score: number;
+  passed: boolean;
+  metrics: Record<string, unknown>;
+  warnings: QualityIssue[];
+  errors: QualityIssue[];
+  suggestions: string[];
+}
+export type ImageKbMode = 'exact' | 'max';
+export type LayoutPaperSize = 'six-inch' | 'five-inch' | 'a4';
+export type RenderMode = 'solid' | 'upDownGradientWhite' | 'centerGradientWhite';
 
 export interface UploadHandle {
   uploadId: string;
@@ -32,6 +53,51 @@ export interface ApiErrorBody {
   };
 }
 
+export interface TaskOptions {
+  background: TaskBackgroundColor;
+  renderOfficialIdPhoto: boolean;
+  renderAiEnhancePreview: boolean;
+  aiEnhancePreviewKind?: 'none' | 'local-derived-preview' | string;
+  humanMattingModel?: string;
+  faceDetectModel?: string;
+  faceAlign?: boolean;
+  headMeasureRatio?: number;
+  headHeightRatio?: number;
+  topDistance?: number;
+  topDistanceMax?: number;
+  topDistanceMin?: number;
+  dpi?: number;
+  whiteningStrength?: number;
+  brightnessStrength?: number;
+  contrastStrength?: number;
+  saturationStrength?: number;
+  sharpenStrength?: number;
+  imageKb?: number;
+  imageKbMode?: ImageKbMode;
+  watermarkEnabled?: boolean;
+  watermarkText?: string;
+  watermarkTextColor?: string;
+  watermarkTextSize?: number;
+  watermarkTextOpacity?: number;
+  watermarkTextAngle?: number;
+  watermarkTextSpace?: number;
+  printLayoutEnabled?: boolean;
+  layoutPaperSize?: LayoutPaperSize;
+  printLayoutSize?: LayoutPaperSize;
+  layoutCropLine?: boolean;
+  horizontalFlip?: boolean;
+  jpegFormat?: boolean;
+  fiveInchPaper?: boolean;
+  renderMode?: RenderMode;
+  customBackgroundEnabled?: boolean;
+  customBackgroundHex?: string;
+  customBackgroundRgb?: [number, number, number] | string | { r: number; g: number; b: number };
+  backgroundRgb?: [number, number, number];
+  pluginFlags?: string[];
+  spec?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
 export interface ProcessingTask {
   taskId: string;
   status: TaskStatus;
@@ -39,14 +105,16 @@ export interface ProcessingTask {
   templateId: string;
   platform: Platform;
   aiMode: AiMode;
-  options: {
-    background: BackgroundColor;
-    renderOfficialIdPhoto: boolean;
-    renderAiEnhancePreview: boolean;
-    aiEnhancePreviewKind?: 'none' | 'local-derived-preview' | string;
-  };
+  options: TaskOptions;
   officialResult?: ResultFile;
   aiEnhanceResult?: ResultFile;
+  layoutResult?: ResultFile;
+  watermarkedResult?: ResultFile;
+  compressedResult?: ResultFile;
+  compressedTargetKb?: number;
+  qualityReport?: QualityReport;
+  warning?: { code: string; message: string };
+  warnings?: { code: string; message: string }[];
   error?: {
     code: string;
     message: string;
@@ -60,7 +128,7 @@ export interface TaskCreateInput {
   templateId: string;
   platform: Platform;
   aiMode: AiMode;
-  options?: Record<string, unknown>;
+  options?: TaskOptions;
 }
 
 export interface IdPhotoTemplate {
@@ -72,6 +140,7 @@ export interface IdPhotoTemplate {
   height?: number;
   width?: number;
   dpi?: number;
+  common?: boolean;
 }
 
 export interface StudioConfig {
@@ -122,15 +191,18 @@ export interface AdminStats {
   };
 }
 
-const apiBaseUrl = (process.env.NEXT_PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '');
-const useMockApi = process.env.NEXT_PUBLIC_USE_MOCK_API === 'true' || !apiBaseUrl;
+const apiBaseUrl = (process.env.NEXT_PUBLIC_API_BASE_URL ?? '/api').replace(/\/$/, '');
+const useMockApi = process.env.NEXT_PUBLIC_USE_MOCK_API === 'true';
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const stamp = () => Math.random().toString(36).slice(2, 8);
 const expiresAt = (minutes: number) => new Date(Date.now() + minutes * 60_000).toISOString();
 
 function apiUrl(path: string) {
-  return `${apiBaseUrl}${path}`;
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  if (apiBaseUrl === '/api' && normalizedPath === '/api') return '/api';
+  if (apiBaseUrl === '/api' && normalizedPath.startsWith('/api/')) return normalizedPath;
+  return `${apiBaseUrl}${normalizedPath}`;
 }
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
@@ -151,9 +223,24 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const templates: IdPhotoTemplate[] = [
-  { templateId: 'cn-id-1inch', label: '一寸', size: '25 × 35 mm', headRange: '头顶 3–5 mm · 肩线居中', printNote: '常用报名 / 简历 / 证件归档', height: 413, width: 295, dpi: 300 },
-  { templateId: 'cn-id-2inch', label: '二寸', size: '35 × 49 mm', headRange: '脸部 28–33 mm · 留白均衡', printNote: '考试 / 档案 / 纸质冲印', height: 626, width: 413, dpi: 300 },
-  { templateId: 'passport-visa', label: '护照 / 签证', size: '33 × 48 mm', headRange: '眼线参考 · ICAO 风格构图', printNote: '护照、签证材料预检', height: 567, width: 390, dpi: 300 },
+  { templateId: 'cn-id-1inch', label: '一寸', size: '25.0 × 35.0 mm · 295 × 413 px', headRange: 'IDCreator 裁切参数可调：head/top/dpi 已接入；其余高级项按能力逐步开放。', printNote: '常用报名 / 简历 / 证件归档', height: 413, width: 295, dpi: 300, common: true },
+  { templateId: 'cn-id-2inch', label: '二寸', size: '35.0 × 53.0 mm · 413 × 626 px', headRange: 'IDCreator 裁切参数可调：head/top/dpi 已接入；其余高级项按能力逐步开放。', printNote: '考试 / 档案 / 纸质冲印', height: 626, width: 413, dpi: 300, common: true },
+  { templateId: 'cn-photo-03', label: '小一寸', size: '22.0 × 32.0 mm · 260 × 378 px', headRange: 'IDCreator 裁切参数可调：head/top/dpi 已接入；其余高级项按能力逐步开放。', printNote: '官方结果由 Hivision IDCreator 渲染。', height: 378, width: 260, dpi: 300, common: true },
+  { templateId: 'cn-photo-04', label: '小二寸', size: '35.0 × 45.0 mm · 413 × 531 px', headRange: 'IDCreator 裁切参数可调：head/top/dpi 已接入；其余高级项按能力逐步开放。', printNote: '官方结果由 Hivision IDCreator 渲染。', height: 531, width: 413, dpi: 300, common: true },
+  { templateId: 'passport-visa', label: '大一寸', size: '33.0 × 48.0 mm · 390 × 567 px', headRange: 'IDCreator 裁切参数可调：head/top/dpi 已接入；其余高级项按能力逐步开放。', printNote: '护照、签证材料预检', height: 567, width: 390, dpi: 300, common: true },
+  { templateId: 'cn-photo-06', label: '大二寸', size: '35.0 × 53.0 mm · 413 × 626 px', headRange: 'IDCreator 裁切参数可调：head/top/dpi 已接入；其余高级项按能力逐步开放。', printNote: '官方结果由 Hivision IDCreator 渲染。', height: 626, width: 413, dpi: 300, common: true },
+  { templateId: 'cn-photo-07', label: '五寸', size: '88.9 × 126.9 mm · 1050 × 1499 px', headRange: 'IDCreator 裁切参数可调：head/top/dpi 已接入；其余高级项按能力逐步开放。', printNote: '官方结果由 Hivision IDCreator 渲染。', height: 1499, width: 1050, dpi: 300, common: false },
+  { templateId: 'cn-photo-08', label: '教师资格证', size: '25.0 × 35.0 mm · 295 × 413 px', headRange: 'IDCreator 裁切参数可调：head/top/dpi 已接入；其余高级项按能力逐步开放。', printNote: '官方结果由 Hivision IDCreator 渲染。', height: 413, width: 295, dpi: 300, common: false },
+  { templateId: 'cn-photo-09', label: '国家公务员考试', size: '25.0 × 35.0 mm · 295 × 413 px', headRange: 'IDCreator 裁切参数可调：head/top/dpi 已接入；其余高级项按能力逐步开放。', printNote: '官方结果由 Hivision IDCreator 渲染。', height: 413, width: 295, dpi: 300, common: false },
+  { templateId: 'cn-photo-10', label: '初级会计考试', size: '25.0 × 35.0 mm · 295 × 413 px', headRange: 'IDCreator 裁切参数可调：head/top/dpi 已接入；其余高级项按能力逐步开放。', printNote: '官方结果由 Hivision IDCreator 渲染。', height: 413, width: 295, dpi: 300, common: false },
+  { templateId: 'cn-photo-11', label: '英语四六级考试', size: '12.2 × 16.3 mm · 144 × 192 px', headRange: 'IDCreator 裁切参数可调：head/top/dpi 已接入；其余高级项按能力逐步开放。', printNote: '官方结果由 Hivision IDCreator 渲染。', height: 192, width: 144, dpi: 300, common: false },
+  { templateId: 'cn-photo-12', label: '计算机等级考试', size: '33.0 × 48.0 mm · 390 × 567 px', headRange: 'IDCreator 裁切参数可调：head/top/dpi 已接入；其余高级项按能力逐步开放。', printNote: '官方结果由 Hivision IDCreator 渲染。', height: 567, width: 390, dpi: 300, common: false },
+  { templateId: 'cn-photo-13', label: '研究生考试', size: '45.0 × 60.0 mm · 531 × 709 px', headRange: 'IDCreator 裁切参数可调：head/top/dpi 已接入；其余高级项按能力逐步开放。', printNote: '官方结果由 Hivision IDCreator 渲染。', height: 709, width: 531, dpi: 300, common: false },
+  { templateId: 'cn-photo-14', label: '社保卡', size: '30.3 × 37.3 mm · 358 × 441 px', headRange: 'IDCreator 裁切参数可调：head/top/dpi 已接入；其余高级项按能力逐步开放。', printNote: '制卡与归档参考', height: 441, width: 358, dpi: 300, common: false },
+  { templateId: 'cn-photo-15', label: '电子驾驶证', size: '22.0 × 32.0 mm · 260 × 378 px', headRange: 'IDCreator 裁切参数可调：head/top/dpi 已接入；其余高级项按能力逐步开放。', printNote: '电子证照申领参考', height: 378, width: 260, dpi: 300, common: false },
+  { templateId: 'cn-photo-16', label: '美国签证', size: '50.8 × 50.8 mm · 600 × 600 px', headRange: 'IDCreator 裁切参数可调：head/top/dpi 已接入；其余高级项按能力逐步开放。', printNote: '签证材料预检', height: 600, width: 600, dpi: 300, common: false },
+  { templateId: 'cn-photo-17', label: '日本签证', size: '25.0 × 35.0 mm · 295 × 413 px', headRange: 'IDCreator 裁切参数可调：head/top/dpi 已接入；其余高级项按能力逐步开放。', printNote: '签证材料预检', height: 413, width: 295, dpi: 300, common: false },
+  { templateId: 'cn-photo-18', label: '韩国签证', size: '35.0 × 45.0 mm · 413 × 531 px', headRange: 'IDCreator 裁切参数可调：head/top/dpi 已接入；其余高级项按能力逐步开放。', printNote: '签证材料预检', height: 531, width: 413, dpi: 300, common: false },
 ];
 
 export const config: StudioConfig = {
@@ -221,19 +308,34 @@ async function mockGetTask(task: ProcessingTask, tick: number): Promise<Processi
     downloadUrl: '#mock-official-download-miniapp-compatible',
     expiresAt: expiresAt(90),
   };
+  const derivedResult = (lane: string): ResultFile => ({
+    fileId: `file_result_${lane}_${task.taskId.slice(-6)}`,
+    previewUrl: `#mock-${lane}-preview-miniapp-compatible`,
+    downloadUrl: `#mock-${lane}-download-miniapp-compatible`,
+    expiresAt: expiresAt(90),
+  });
 
   return {
     ...task,
     status: 'succeeded',
     officialResult,
-    aiEnhanceResult: task.options.renderAiEnhancePreview
-      ? {
-          fileId: `file_result_ai_${task.taskId.slice(-6)}`,
-          previewUrl: '#mock-ai-preview-separated',
-          downloadUrl: '#mock-ai-download-separated',
-          expiresAt: expiresAt(90),
-        }
-      : undefined,
+    layoutResult: task.options.printLayoutEnabled ? derivedResult('layout') : undefined,
+    watermarkedResult: task.options.watermarkEnabled ? derivedResult('watermarked') : undefined,
+    compressedResult: typeof task.options.imageKb === 'number' ? derivedResult('compressed') : undefined,
+    compressedTargetKb: typeof task.options.imageKb === 'number' ? task.options.imageKb : undefined,
+    aiEnhanceResult: task.options.renderAiEnhancePreview ? derivedResult('ai') : undefined,
+    qualityReport: {
+      score: 92,
+      passed: true,
+      metrics: {
+        dimensions: { match: true },
+        face: { count: 1, detector: 'mock' },
+        backgroundColor: { meanDelta: 2.4 },
+      },
+      warnings: [],
+      errors: [],
+      suggestions: ['Mock precheck passed; verify final agency-specific requirements before submission.'],
+    },
   };
 }
 

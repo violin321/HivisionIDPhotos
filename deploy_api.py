@@ -1,5 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
 import base64
+import csv
 import hashlib
 import hmac
 import json
@@ -350,52 +351,87 @@ def validate_upload_bytes(content: bytes, content_type: str) -> None:
 
 DEFAULT_TEMPLATE_ID = "cn-id-1inch"
 DEFAULT_BACKGROUND = "white"
-
-# Pixel dimensions are mapped from demo/assets/size_list_CN.csv and passed to
-# IDCreator as (height, width). Keep this adapter-level map explicit so Web v2
-# never silently guesses an unsupported template.
-TEMPLATE_SPECS: dict[str, dict[str, Any]] = {
-    "cn-id-1inch": {
-        "label": "一寸",
-        "size_mm": "25 × 35 mm",
-        "height": 413,
-        "width": 295,
-        "dpi": 300,
-        "head_measure_ratio": 0.2,
-        "head_height_ratio": 0.45,
-        "top_distance_max": 0.12,
-        "top_distance_min": 0.10,
-    },
-    "cn-id-2inch": {
-        "label": "二寸",
-        "size_mm": "35 × 49 mm",
-        "height": 626,
-        "width": 413,
-        "dpi": 300,
-        "head_measure_ratio": 0.2,
-        "head_height_ratio": 0.45,
-        "top_distance_max": 0.12,
-        "top_distance_min": 0.10,
-    },
-    "passport-visa": {
-        "label": "大一寸 / 护照签证参考",
-        "size_mm": "33 × 48 mm",
-        "height": 567,
-        "width": 390,
-        "dpi": 300,
-        "head_measure_ratio": 0.2,
-        "head_height_ratio": 0.45,
-        "top_distance_max": 0.12,
-        "top_distance_min": 0.10,
-    },
+DEFAULT_TEMPLATE_DPI = 300
+DEFAULT_HEAD_MEASURE_RATIO = 0.2
+DEFAULT_HEAD_HEIGHT_RATIO = 0.45
+DEFAULT_TOP_DISTANCE_MAX = 0.12
+DEFAULT_TOP_DISTANCE_MIN = 0.10
+TEMPLATE_CSV_PATH = Path(__file__).resolve().parent / "demo" / "assets" / "size_list_CN.csv"
+COMMON_TEMPLATE_LABELS = {"一寸", "二寸", "小一寸", "小二寸", "大一寸", "大二寸"}
+LEGACY_TEMPLATE_ID_MAP = {
+    "一寸": "cn-id-1inch",
+    "二寸": "cn-id-2inch",
+    "大一寸": "passport-visa",
+}
+TEMPLATE_PRINT_NOTES = {
+    "一寸": "常用报名 / 简历 / 证件归档",
+    "二寸": "考试 / 档案 / 纸质冲印",
+    "大一寸": "护照、签证材料预检",
+    "美国签证": "签证材料预检",
+    "日本签证": "签证材料预检",
+    "韩国签证": "签证材料预检",
+    "社保卡": "制卡与归档参考",
+    "电子驾驶证": "电子证照申领参考",
 }
 
-BACKGROUND_BGR: dict[str, tuple[int, int, int]] = {
+
+def pixels_to_mm(pixels: int, dpi: int = DEFAULT_TEMPLATE_DPI) -> float:
+    return round((pixels / dpi) * 25.4, 1)
+
+
+def format_template_size(height: int, width: int, dpi: int = DEFAULT_TEMPLATE_DPI) -> str:
+    return f"{pixels_to_mm(width, dpi)} × {pixels_to_mm(height, dpi)} mm · {width} × {height} px"
+
+
+def build_template_specs() -> dict[str, dict[str, Any]]:
+    specs: dict[str, dict[str, Any]] = {}
+    with TEMPLATE_CSV_PATH.open("r", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        for index, row in enumerate(reader, start=1):
+            label = str(row.get("Name") or "").strip()
+            if not label:
+                continue
+            height = int(row["Height"])
+            width = int(row["Width"])
+            template_id = LEGACY_TEMPLATE_ID_MAP.get(label, f"cn-photo-{index:02d}")
+            specs[template_id] = {
+                "label": label,
+                "size_mm": format_template_size(height, width),
+                "height": height,
+                "width": width,
+                "dpi": DEFAULT_TEMPLATE_DPI,
+                "head_measure_ratio": DEFAULT_HEAD_MEASURE_RATIO,
+                "head_height_ratio": DEFAULT_HEAD_HEIGHT_RATIO,
+                "top_distance_max": DEFAULT_TOP_DISTANCE_MAX,
+                "top_distance_min": DEFAULT_TOP_DISTANCE_MIN,
+                "common": label in COMMON_TEMPLATE_LABELS,
+                "print_note": TEMPLATE_PRINT_NOTES.get(label, "官方结果由 Hivision IDCreator 渲染。"),
+            }
+    return specs
+
+
+# Pixel dimensions are loaded from demo/assets/size_list_CN.csv and passed to
+# IDCreator as (height, width). Web v2 now shares the full preset list instead
+# of keeping a reduced hard-coded subset.
+TEMPLATE_SPECS: dict[str, dict[str, Any]] = build_template_specs()
+
+# add_background() and save_image_dpi_to_bytes() both operate on RGB-like
+# channel order in this project path despite the legacy parameter name being
+# `bgr`. Keep the web presets aligned with demo/processor.py's HEX handling.
+BACKGROUND_RGB: dict[str, tuple[int, int, int]] = {
     "white": (255, 255, 255),
-    "blue": (255, 120, 67),
-    "red": (49, 49, 209),
-    "gray": (238, 238, 238),
+    "blue": (98, 139, 206),
+    "red": (215, 69, 50),
+    "gray": (242, 240, 240),
 }
+BACKGROUND_BGR = BACKGROUND_RGB
+
+LAYOUT_PAPER_SIZES: dict[str, dict[str, Any]] = {
+    "six-inch": {"label": "六寸", "height": 1205, "width": 1795},
+    "five-inch": {"label": "五寸", "height": 1051, "width": 1500},
+    "a4": {"label": "A4", "height": 2479, "width": 3508},
+}
+DEFAULT_LAYOUT_PAPER_SIZE = "six-inch"
 
 BACKGROUND_LABELS: dict[str, str] = {
     "white": "白底",
@@ -532,11 +568,12 @@ def resolve_result_file(relative_path: str) -> Path:
     return candidate
 
 
-def build_result_file(task_id: str, lane: Literal["official", "ai"], filename: str) -> dict[str, str]:
+def build_result_file(task_id: str, lane: str, filename: str) -> dict[str, str]:
     download_url, expires_at = signed_download_url(task_id, filename, "download")
     preview_url, _ = signed_download_url(task_id, filename, "preview")
+    safe_lane = "".join(char if char.isalnum() else "_" for char in lane)[:32] or "derived"
     return {
-        "fileId": f"file_result_{lane}_{task_id[-6:]}",
+        "fileId": f"file_result_{safe_lane}_{task_id[-6:]}",
         "previewUrl": preview_url,
         "downloadUrl": download_url,
         "expiresAt": expires_at,
@@ -633,7 +670,11 @@ def supported_template_ids() -> list[str]:
 
 
 def supported_backgrounds() -> list[str]:
-    return list(BACKGROUND_BGR.keys())
+    return list(BACKGROUND_RGB.keys())
+
+
+def supported_layout_paper_sizes() -> list[str]:
+    return list(LAYOUT_PAPER_SIZES.keys())
 
 
 def validate_template_id(template_id: str | None) -> str:
@@ -652,7 +693,9 @@ def validate_template_id(template_id: str | None) -> str:
 
 def validate_background(background: Any) -> str:
     value = str(background or DEFAULT_BACKGROUND)
-    if value not in BACKGROUND_BGR:
+    if value == "custom":
+        return value
+    if value not in BACKGROUND_RGB:
         raise HTTPException(
             status_code=400,
             detail=error_detail(
@@ -664,28 +707,131 @@ def validate_background(background: Any) -> str:
     return value
 
 
+def validate_layout_paper_size(value: Any) -> str:
+    paper_size = str(value or DEFAULT_LAYOUT_PAPER_SIZE)
+    aliases = {"six": "six-inch", "6inch": "six-inch", "5inch": "five-inch", "five": "five-inch"}
+    paper_size = aliases.get(paper_size, paper_size)
+    if paper_size not in LAYOUT_PAPER_SIZES:
+        raise ValueError(f"Unsupported layoutPaperSize '{paper_size}'. Supported values: {', '.join(supported_layout_paper_sizes())}.")
+    return paper_size
+
+
+def normalize_plugin_flags(options: dict[str, Any]) -> set[str]:
+    raw_flags = options.get("pluginFlags")
+    flags: set[str] = set()
+    if isinstance(raw_flags, (list, tuple, set)):
+        flags.update(str(item) for item in raw_flags if item is not None)
+    for key in ("faceAlign", "horizontalFlip", "layoutCropLine", "jpegFormat", "fiveInchPaper"):
+        if options.get(key):
+            flags.add(key)
+    if options.get("layoutPaperSize") == "five-inch" or options.get("printLayoutSize") == "five-inch":
+        flags.add("fiveInchPaper")
+    return flags
+
+
+def normalize_render_mode(value: Any) -> str:
+    aliases = {
+        "solid": "pure_color",
+        "pure_color": "pure_color",
+        "pureColor": "pure_color",
+        "upDownGradientWhite": "updown_gradient",
+        "updown_gradient": "updown_gradient",
+        "updownGradient": "updown_gradient",
+        "centerGradientWhite": "center_gradient",
+        "center_gradient": "center_gradient",
+        "centerGradient": "center_gradient",
+    }
+    mode = aliases.get(str(value or "solid"), None)
+    if not mode:
+        raise ValueError("renderMode must be solid, upDownGradientWhite, or centerGradientWhite.")
+    return mode
+
+
+def normalize_hex_color(value: Any) -> tuple[int, int, int]:
+    color = str(value or "").strip()
+    if color.startswith("#"):
+        color = color[1:]
+    if len(color) == 3:
+        color = "".join(ch * 2 for ch in color)
+    if len(color) != 6 or any(ch not in "0123456789abcdefABCDEF" for ch in color):
+        raise ValueError("customBackgroundHex must be a 3 or 6 digit HEX color.")
+    return tuple(int(color[index:index + 2], 16) for index in (0, 2, 4))
+
+
+def normalize_rgb_color(value: Any) -> tuple[int, int, int]:
+    if isinstance(value, str):
+        parts = [part.strip() for part in value.split(",")]
+    elif isinstance(value, (list, tuple)):
+        parts = list(value)
+    elif isinstance(value, dict):
+        parts = [value.get("r"), value.get("g"), value.get("b")]
+    else:
+        raise ValueError("customBackgroundRgb must be an RGB array, object, or comma-separated string.")
+    if len(parts) != 3:
+        raise ValueError("customBackgroundRgb must contain exactly three channels.")
+    channels = tuple(clamp_int(part, -1, 0, 255) for part in parts)
+    return channels
+
+
+def resolve_background_rgb(options: dict[str, Any]) -> tuple[str, tuple[int, int, int]]:
+    background = validate_background(options.get("background", DEFAULT_BACKGROUND))
+    if background == "custom" or options.get("customBackgroundEnabled"):
+        if options.get("customBackgroundHex"):
+            return "custom", normalize_hex_color(options.get("customBackgroundHex"))
+        if options.get("customBackgroundRgb") is not None:
+            return "custom", normalize_rgb_color(options.get("customBackgroundRgb"))
+        raise ValueError("Custom background requires customBackgroundHex or customBackgroundRgb.")
+    return background, BACKGROUND_RGB[background]
+
+
+def normalize_image_kb_mode(value: Any) -> str:
+    mode = str(value or "exact")
+    aliases = {"pad": "exact", "maxNoPad": "max", "max-no-pad": "max"}
+    mode = aliases.get(mode, mode)
+    if mode not in {"exact", "max"}:
+        raise ValueError("imageKbMode must be 'exact' or 'max'.")
+    return mode
+
+
 def normalize_template_options(template_id: str, options: dict[str, Any]) -> dict[str, Any]:
     template = validate_template_id(template_id)
     spec = dict(TEMPLATE_SPECS[template])
     user_spec = options.get("spec") if isinstance(options.get("spec"), dict) else {}
+    aliases = {
+        "height": "height",
+        "width": "width",
+        "dpi": "dpi",
+        "head_measure_ratio": "head_measure_ratio",
+        "headMeasureRatio": "head_measure_ratio",
+        "head_height_ratio": "head_height_ratio",
+        "headHeightRatio": "head_height_ratio",
+        "top_distance_max": "top_distance_max",
+        "topDistanceMax": "top_distance_max",
+        "top_distance_min": "top_distance_min",
+        "topDistanceMin": "top_distance_min",
+    }
     # Only allow controlled numeric overrides, and keep invalid input noisy rather
     # than silently creating a wrong officialResult.
     for source in (options, user_spec):
-        for key in ("height", "width", "dpi", "head_measure_ratio", "head_height_ratio", "top_distance_max", "top_distance_min"):
-            if key in source and source[key] is not None:
-                spec[key] = source[key]
+        for source_key, target_key in aliases.items():
+            if source_key in source and source[source_key] is not None:
+                spec[target_key] = source[source_key]
+    if options.get("topDistance") is not None and options.get("topDistanceMax") is None and options.get("top_distance_max") is None:
+        spec["top_distance_max"] = options["topDistance"]
     try:
         spec["height"] = int(spec.get("height", 413))
         spec["width"] = int(spec.get("width", 295))
-        spec["dpi"] = int(spec.get("dpi", 300))
-        spec["head_measure_ratio"] = float(spec.get("head_measure_ratio", 0.2))
-        spec["head_height_ratio"] = float(spec.get("head_height_ratio", 0.45))
-        spec["top_distance_max"] = float(spec.get("top_distance_max", 0.12))
-        spec["top_distance_min"] = float(spec.get("top_distance_min", 0.10))
+        spec["dpi"] = int(spec.get("dpi", DEFAULT_TEMPLATE_DPI))
+        spec["head_measure_ratio"] = float(spec.get("head_measure_ratio", DEFAULT_HEAD_MEASURE_RATIO))
+        spec["head_height_ratio"] = float(spec.get("head_height_ratio", DEFAULT_HEAD_HEIGHT_RATIO))
+        spec["top_distance_max"] = float(spec.get("top_distance_max", DEFAULT_TOP_DISTANCE_MAX))
+        spec["top_distance_min"] = float(spec.get("top_distance_min", spec["top_distance_max"] - 0.02))
     except (TypeError, ValueError) as exc:
         raise ValueError(f"Invalid numeric template spec for '{template}': {exc}") from exc
     if spec["height"] <= 0 or spec["width"] <= 0 or spec["dpi"] <= 0:
         raise ValueError(f"Invalid template dimensions for '{template}'.")
+    if spec["top_distance_min"] > spec["top_distance_max"]:
+        spec["top_distance_min"] = max(0.0, spec["top_distance_max"] - 0.02)
     spec["template_id"] = template
     return spec
 
@@ -702,6 +848,237 @@ def read_upload_image(upload_path: str) -> np.ndarray:
 def write_png(image: np.ndarray, output_path: Path, dpi: int) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     save_image_dpi_to_bytes(image.astype(np.uint8), str(output_path), dpi=dpi)
+
+
+def write_jpeg(image: np.ndarray, output_path: Path, dpi: int, quality: int = 95) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    pil_image = Image.fromarray(image.astype(np.uint8))
+    if pil_image.mode != "RGB":
+        pil_image = pil_image.convert("RGB")
+    pil_image.save(output_path, format="JPEG", quality=quality, dpi=(dpi, dpi))
+
+
+def clamp_int(value: Any, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(minimum, min(maximum, parsed))
+
+
+def clamp_float(value: Any, default: float, minimum: float, maximum: float) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(minimum, min(maximum, parsed))
+
+
+def make_layout_from_official(official_image: np.ndarray, spec: dict[str, Any], output_path: Path, dpi: int, *, crop_line: bool = False) -> None:
+    paper_size = validate_layout_paper_size(spec.get("layoutPaperSize") or spec.get("printLayoutSize"))
+    paper = LAYOUT_PAPER_SIZES[paper_size]
+    layout_height = clamp_int(spec.get("layoutHeight"), int(paper["height"]), 200, 5000)
+    layout_width = clamp_int(spec.get("layoutWidth"), int(paper["width"]), 200, 5000)
+    typography_arr, typography_rotate = generate_layout_array(
+        input_height=int(spec["height"]),
+        input_width=int(spec["width"]),
+        LAYOUT_HEIGHT=layout_height,
+        LAYOUT_WIDTH=layout_width,
+    )
+    layout_image = generate_layout_image(
+        official_image,
+        typography_arr,
+        typography_rotate,
+        height=int(spec["height"]),
+        width=int(spec["width"]),
+        crop_line=crop_line,
+        LAYOUT_HEIGHT=layout_height,
+        LAYOUT_WIDTH=layout_width,
+    )
+    write_png(layout_image.astype(np.uint8), output_path, dpi)
+
+
+def make_watermarked_from_official(official_image: np.ndarray, options: dict[str, Any], output_path: Path, dpi: int) -> None:
+    text = str(options.get("watermarkText") or "仅供证件照使用")[:80]
+    watermarked = add_watermark(
+        image=official_image,
+        text=text,
+        color=str(options.get("watermarkTextColor") or "#8B8B1B"),
+        size=clamp_int(options.get("watermarkTextSize"), 32, 8, 160),
+        opacity=clamp_float(options.get("watermarkTextOpacity"), 0.35, 0.05, 1.0),
+        angle=clamp_int(options.get("watermarkTextAngle"), 30, -90, 90),
+        space=clamp_int(options.get("watermarkTextSpace"), 75, 10, 300),
+    )
+    write_png(watermarked.astype(np.uint8), output_path, dpi)
+
+
+def make_compressed_from_official(official_image: np.ndarray, target_kb: Any, output_path: Path, dpi: int, *, mode: str = "exact") -> int:
+    kb = clamp_int(target_kb, 0, 10, 1000)
+    if kb <= 0:
+        raise ValueError("imageKb must be a positive number between 10 and 1000.")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    image = Image.fromarray(official_image.astype(np.uint8))
+    if image.mode != "RGB":
+        image = image.convert("RGB")
+    if normalize_image_kb_mode(mode) == "exact":
+        resize_image_to_kb(official_image.astype(np.uint8), str(output_path), kb, dpi=dpi)
+        return kb
+
+    import io
+    best_bytes: bytes | None = None
+    for quality in range(95, 0, -5):
+        byte_stream = io.BytesIO()
+        image.save(byte_stream, format="JPEG", quality=quality, dpi=(dpi, dpi))
+        candidate = byte_stream.getvalue()
+        best_bytes = candidate
+        if len(candidate) <= kb * 1024:
+            break
+    output_path.write_bytes(best_bytes or b"")
+    return kb
+
+
+def _quality_issue(code: str, message: str, severity: str = "warning", metric: str | None = None) -> dict[str, Any]:
+    issue: dict[str, Any] = {"code": code, "message": message, "severity": severity}
+    if metric:
+        issue["metric"] = metric
+    return issue
+
+
+def _foreground_mask_from_alpha(image: np.ndarray) -> np.ndarray | None:
+    if image is not None and image.ndim == 3 and image.shape[2] >= 4:
+        return image[:, :, 3] > 10
+    return None
+
+
+def _sample_background_pixels(official_rgb: np.ndarray, transparent_standard: np.ndarray | None = None) -> np.ndarray:
+    mask = _foreground_mask_from_alpha(transparent_standard) if transparent_standard is not None else None
+    if mask is not None and (~mask).sum() >= 64:
+        return official_rgb[:, :, :3][~mask]
+    height, width = official_rgb.shape[:2]
+    border = max(2, min(height, width) // 20)
+    border_mask = np.zeros((height, width), dtype=bool)
+    border_mask[:border, :] = True
+    border_mask[-border:, :] = True
+    border_mask[:, :border] = True
+    border_mask[:, -border:] = True
+    return official_rgb[:, :, :3][border_mask]
+
+
+def build_quality_report(result: Any, official_rgb: np.ndarray, spec: dict[str, Any], background_rgb: tuple[int, int, int]) -> dict[str, Any]:
+    metrics: dict[str, Any] = {}
+    warnings: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    suggestions: list[str] = []
+    score = 100
+
+    height, width = official_rgb.shape[:2]
+    expected_height, expected_width = int(spec["height"]), int(spec["width"])
+    dimensions_match = height == expected_height and width == expected_width
+    aspect_delta = abs((width / max(1, height)) - (expected_width / max(1, expected_height)))
+    metrics["dimensions"] = {
+        "actual": {"width": width, "height": height},
+        "expected": {"width": expected_width, "height": expected_height},
+        "match": dimensions_match,
+        "aspectDelta": round(aspect_delta, 6),
+    }
+    if not dimensions_match:
+        errors.append(_quality_issue("OUTPUT_DIMENSION_MISMATCH", "输出尺寸与当前规格不一致。", "error", "dimensions"))
+        suggestions.append("请重新生成，或检查所选规格的 width/height 参数。")
+        score -= 30
+
+    face = getattr(result, "face", None)
+    face_rectangle = face.get("rectangle") if isinstance(face, dict) else None
+    roll_angle = face.get("roll_angle") if isinstance(face, dict) else None
+    metrics["face"] = {
+        "count": 1 if face_rectangle is not None else None,
+        "detector": "IDCreator",
+        "rectangle": [round(float(v), 3) for v in face_rectangle] if face_rectangle is not None else None,
+        "rollAngle": round(float(roll_angle), 3) if roll_angle is not None else None,
+    }
+    if face_rectangle is None:
+        warnings.append(_quality_issue("FACE_METRIC_UNAVAILABLE", "人脸数量已由 IDCreator 主链路校验，但未返回可展示的人脸框指标。", "warning", "face"))
+        score -= 5
+
+    foreground_mask = _foreground_mask_from_alpha(getattr(result, "standard", None))
+    if foreground_mask is not None and foreground_mask.any():
+        ys, xs = np.where(foreground_mask)
+        x_min, x_max = int(xs.min()), int(xs.max())
+        y_min, y_max = int(ys.min()), int(ys.max())
+        fg_width = max(1, x_max - x_min + 1)
+        fg_height = max(1, y_max - y_min + 1)
+        top_distance_ratio = y_min / max(1, height)
+        horizontal_center_offset = ((x_min + x_max + 1) / 2 - width / 2) / max(1, width)
+        foreground_height_ratio = fg_height / max(1, height)
+        foreground_width_ratio = fg_width / max(1, width)
+        metrics["composition"] = {
+            "foregroundBox": {"x": x_min, "y": y_min, "width": fg_width, "height": fg_height},
+            "topDistanceRatio": round(top_distance_ratio, 4),
+            "horizontalCenterOffset": round(horizontal_center_offset, 4),
+            "foregroundHeightRatio": round(foreground_height_ratio, 4),
+            "foregroundWidthRatio": round(foreground_width_ratio, 4),
+        }
+        top_min = max(0.0, float(spec.get("top_distance_min", DEFAULT_TOP_DISTANCE_MIN)) - 0.035)
+        top_max = min(0.35, float(spec.get("top_distance_max", DEFAULT_TOP_DISTANCE_MAX)) + 0.06)
+        if top_distance_ratio < top_min or top_distance_ratio > top_max:
+            warnings.append(_quality_issue("HEAD_TOP_DISTANCE_OUT_OF_RANGE", "头顶到照片顶部距离可能不在推荐范围内。", "warning", "composition.topDistanceRatio"))
+            suggestions.append("可尝试调整 top_distance/top_distance_max 后重新生成。")
+            score -= 10
+        if abs(horizontal_center_offset) > 0.08:
+            warnings.append(_quality_issue("SUBJECT_NOT_CENTERED", "人像水平居中偏差较大。", "warning", "composition.horizontalCenterOffset"))
+            suggestions.append("建议使用更正面的原图，或开启人脸旋转对齐后重试。")
+            score -= 8
+        if foreground_height_ratio < 0.58 or foreground_height_ratio > 0.98:
+            warnings.append(_quality_issue("HEAD_BODY_SCALE_CHECK", "人像占画面比例可能偏小或偏大。", "warning", "composition.foregroundHeightRatio"))
+            suggestions.append("建议换一张清晰正面半身照，避免头肩过远或过近。")
+            score -= 8
+    else:
+        metrics["composition"] = {"available": False}
+        warnings.append(_quality_issue("COMPOSITION_METRIC_UNAVAILABLE", "无法从透明结果中提取人像轮廓，头部比例/居中指标已降级。", "warning", "composition"))
+        suggestions.append("若预览看起来不居中，请换用边缘清晰、背景简单的原图。")
+        score -= 6
+
+    bg_pixels = _sample_background_pixels(official_rgb, getattr(result, "standard", None))
+    if bg_pixels.size:
+        mean_rgb = bg_pixels.astype(np.float32).mean(axis=0)
+        target = np.array(background_rgb, dtype=np.float32)
+        mean_delta = float(np.abs(mean_rgb - target).mean())
+        max_delta = float(np.abs(mean_rgb - target).max())
+        metrics["backgroundColor"] = {
+            "targetRgb": [int(v) for v in background_rgb],
+            "sampleMeanRgb": [round(float(v), 2) for v in mean_rgb],
+            "meanDelta": round(mean_delta, 3),
+            "maxChannelDelta": round(max_delta, 3),
+        }
+        if mean_delta > 18:
+            warnings.append(_quality_issue("BACKGROUND_COLOR_DEVIATION", "背景色抽样与目标色存在明显偏差。", "warning", "backgroundColor.meanDelta"))
+            suggestions.append("如使用自定义底色，请确认 HEX/RGB 输入正确；渐变模式下边缘抽样会自然接近白色。")
+            score -= 8
+    else:
+        metrics["backgroundColor"] = {"available": False}
+        warnings.append(_quality_issue("BACKGROUND_SAMPLE_UNAVAILABLE", "无法抽样背景色，背景合规指标已降级。", "warning", "backgroundColor"))
+        score -= 4
+
+    score = max(0, min(100, int(round(score))))
+    passed = not errors and score >= 80
+    if not suggestions and warnings:
+        suggestions.append("请按提醒项检查预览；官方结果未被阻断，可下载后人工确认。")
+    if not warnings and not errors:
+        suggestions.append("当前结果通过自动预检；提交前仍建议按具体办事机构要求人工核对。")
+
+    return {
+        "score": score,
+        "passed": passed,
+        "metrics": metrics,
+        "warnings": warnings,
+        "errors": errors,
+        "suggestions": suggestions,
+    }
+
+
+def add_task_warning(task: dict[str, Any], code: str, message: str) -> None:
+    warning = {"code": code, "message": message}
+    task.setdefault("warnings", []).append(warning)
+    task["warning"] = warning
 
 
 def make_ai_preview_from_official(official_image: np.ndarray, output_path: Path, dpi: int) -> None:
@@ -721,9 +1098,11 @@ def run_idcreator_task(task_id: str) -> None:
         if not upload:
             raise FileNotFoundError("Upload handle was not found or has expired.")
 
-        spec = normalize_template_options(task["templateId"], task.get("options", {}))
-        background_key = str(task.get("options", {}).get("background", "white"))
-        background_bgr = BACKGROUND_BGR[validate_background(background_key)]
+        options = task.get("options", {})
+        spec = normalize_template_options(task["templateId"], options)
+        _, background_rgb = resolve_background_rgb(options)
+        plugin_flags = normalize_plugin_flags(options)
+        render_mode = normalize_render_mode(options.get("renderMode"))
 
         choose_handler(
             creator,
@@ -737,24 +1116,76 @@ def run_idcreator_task(task_id: str) -> None:
             head_measure_ratio=spec["head_measure_ratio"],
             head_height_ratio=spec["head_height_ratio"],
             head_top_range=(spec["top_distance_max"], spec["top_distance_min"]),
-            face_alignment=bool(task.get("options", {}).get("faceAlign", False)),
+            face_alignment=("faceAlign" in plugin_flags),
             whitening_strength=int(task.get("options", {}).get("whiteningStrength", 0)),
             brightness_strength=float(task.get("options", {}).get("brightnessStrength", 0)),
             contrast_strength=float(task.get("options", {}).get("contrastStrength", 0)),
             sharpen_strength=float(task.get("options", {}).get("sharpenStrength", 0)),
             saturation_strength=float(task.get("options", {}).get("saturationStrength", 0)),
+            horizontal_flip=("horizontalFlip" in plugin_flags),
         )
 
-        official_rgb = add_background(result.standard, bgr=background_bgr, mode="pure_color").astype(np.uint8)
+        official_rgb = add_background(result.standard, bgr=background_rgb, mode=render_mode).astype(np.uint8)
         result_dir = RESULT_DIR / task_id
-        official_name = "official_idcreator.png"
-        write_png(official_rgb, result_dir / official_name, spec["dpi"])
+        jpeg_format = "jpegFormat" in plugin_flags
+        official_name = "official_idcreator.jpg" if jpeg_format else "official_idcreator.png"
+        if jpeg_format:
+            write_jpeg(official_rgb, result_dir / official_name, spec["dpi"])
+        else:
+            write_png(official_rgb, result_dir / official_name, spec["dpi"])
         task["officialResult"] = build_result_file(task_id, "official", official_name)
+        task["qualityReport"] = build_quality_report(result, official_rgb, spec, background_rgb)
+        task.pop("warning", None)
+        task.pop("warnings", None)
 
-        if task.get("options", {}).get("renderAiEnhancePreview"):
-            ai_name = "ai_enhance_preview_derived.png"
-            make_ai_preview_from_official(official_rgb, result_dir / ai_name, spec["dpi"])
-            task["aiEnhanceResult"] = build_result_file(task_id, "ai", ai_name)
+        if options.get("renderAiEnhancePreview"):
+            try:
+                ai_name = "ai_enhance_preview_derived.png"
+                make_ai_preview_from_official(official_rgb, result_dir / ai_name, spec["dpi"])
+                task["aiEnhanceResult"] = build_result_file(task_id, "ai", ai_name)
+            except Exception as exc:
+                logger.exception("[API] AI preview derivative failed: task_id=%s", task_id)
+                add_task_warning(task, "AI_PREVIEW_FAILED", f"AI preview could not be generated: {exc}")
+
+        if options.get("printLayoutEnabled"):
+            try:
+                layout_name = "layout_print.png"
+                make_layout_from_official(
+                    official_rgb,
+                    {
+                        **spec,
+                        "layoutPaperSize": options.get("layoutPaperSize"),
+                        "printLayoutSize": options.get("printLayoutSize"),
+                        "layoutHeight": options.get("layoutHeight"),
+                        "layoutWidth": options.get("layoutWidth"),
+                    },
+                    result_dir / layout_name,
+                    spec["dpi"],
+                    crop_line=("layoutCropLine" in plugin_flags),
+                )
+                task["layoutResult"] = build_result_file(task_id, "layout", layout_name)
+            except Exception as exc:
+                logger.exception("[API] print layout derivative failed: task_id=%s", task_id)
+                add_task_warning(task, "LAYOUT_RESULT_FAILED", f"Print layout could not be generated: {exc}")
+
+        if options.get("watermarkEnabled"):
+            try:
+                watermarked_name = "watermarked_official.png"
+                make_watermarked_from_official(official_rgb, options, result_dir / watermarked_name, spec["dpi"])
+                task["watermarkedResult"] = build_result_file(task_id, "watermarked", watermarked_name)
+            except Exception as exc:
+                logger.exception("[API] watermark derivative failed: task_id=%s", task_id)
+                add_task_warning(task, "WATERMARK_RESULT_FAILED", f"Watermarked result could not be generated: {exc}")
+
+        if options.get("imageKb") is not None:
+            try:
+                compressed_name = "official_compressed_kb.jpg"
+                compressed_kb = make_compressed_from_official(official_rgb, options.get("imageKb"), result_dir / compressed_name, spec["dpi"], mode=str(options.get("imageKbMode") or "exact"))
+                task["compressedResult"] = build_result_file(task_id, "compressed", compressed_name)
+                task["compressedTargetKb"] = compressed_kb
+            except Exception as exc:
+                logger.exception("[API] target KB derivative failed: task_id=%s", task_id)
+                add_task_warning(task, "COMPRESSED_RESULT_FAILED", f"Target KB result could not be generated: {exc}")
 
         task["status"] = "succeeded"
         task.pop("error", None)
@@ -824,6 +1255,13 @@ class ProcessingTask(BaseModel):
     options: dict[str, Any]
     officialResult: ResultFile | None = None
     aiEnhanceResult: ResultFile | None = None
+    layoutResult: ResultFile | None = None
+    watermarkedResult: ResultFile | None = None
+    compressedResult: ResultFile | None = None
+    compressedTargetKb: int | None = None
+    qualityReport: dict[str, Any] | None = None
+    warning: dict[str, Any] | None = None
+    warnings: list[dict[str, Any]] | None = None
     error: dict[str, Any] | None = None
 
 
@@ -894,8 +1332,9 @@ async def api_templates(_session: dict[str, Any] = Depends(require_auth)):
             "height": spec["height"],
             "width": spec["width"],
             "dpi": spec["dpi"],
-            "headRange": "IDCreator deterministic crop · adapter validated",
-            "printNote": "Official result is rendered by Hivision IDCreator.",
+            "common": spec.get("common", False),
+            "headRange": "IDCreator 裁切参数可调：head/top/dpi 已接入；其余高级项按能力逐步开放。",
+            "printNote": spec.get("print_note", "官方结果由 Hivision IDCreator 渲染。"),
         }
         for template_id, spec in TEMPLATE_SPECS.items()
     ]
@@ -925,6 +1364,10 @@ async def api_config(_session: dict[str, Any] = Depends(require_auth)):
         "defaults": {"templateId": DEFAULT_TEMPLATE_ID, "background": DEFAULT_BACKGROUND},
         "supportedBackgrounds": [
             {"id": key, "label": BACKGROUND_LABELS[key]} for key in supported_backgrounds()
+        ],
+        "layoutPaperSizes": [
+            {"id": key, "label": value["label"], "height": value["height"], "width": value["width"]}
+            for key, value in LAYOUT_PAPER_SIZES.items()
         ],
     }
 
@@ -988,12 +1431,29 @@ async def api_create_task(request: Request, payload: TaskCreateRequest, backgrou
             raise HTTPException(status_code=404, detail=error_detail("UPLOAD_NOT_FOUND", "Upload handle was not found or has expired.", retryable=True))
 
         template_id = validate_template_id(payload.templateId)
-        background = validate_background(payload.options.get("background", DEFAULT_BACKGROUND))
+        task_options = dict(payload.options)
+        background, background_rgb = resolve_background_rgb(task_options)
+        normalize_render_mode(task_options.get("renderMode"))
+        plugin_flags = normalize_plugin_flags(task_options)
         task_id = f"task_{uuid.uuid4().hex[:12]}"
         render_ai = bool(payload.options.get("renderAiEnhancePreview", False)) or payload.aiMode in {"preview", "enhance"}
-        task_options = dict(payload.options)
+        if "fiveInchPaper" in plugin_flags and not task_options.get("layoutPaperSize") and not task_options.get("printLayoutSize"):
+            task_options["layoutPaperSize"] = "five-inch"
+            task_options["printLayoutSize"] = "five-inch"
+        if task_options.get("printLayoutEnabled"):
+            task_options["layoutPaperSize"] = validate_layout_paper_size(task_options.get("layoutPaperSize") or task_options.get("printLayoutSize"))
+            task_options["printLayoutSize"] = task_options["layoutPaperSize"]
+        if task_options.get("imageKb") is not None:
+            task_options["imageKbMode"] = normalize_image_kb_mode(task_options.get("imageKbMode"))
         task_options.update({
             "background": background,
+            "backgroundRgb": list(background_rgb),
+            "renderMode": task_options.get("renderMode") or "solid",
+            "pluginFlags": sorted(plugin_flags),
+            "faceAlign": "faceAlign" in plugin_flags,
+            "horizontalFlip": "horizontalFlip" in plugin_flags,
+            "layoutCropLine": "layoutCropLine" in plugin_flags,
+            "jpegFormat": "jpegFormat" in plugin_flags,
             "renderOfficialIdPhoto": True,
             "renderAiEnhancePreview": render_ai,
             "aiEnhancePreviewKind": "local-derived-preview" if render_ai else "none",

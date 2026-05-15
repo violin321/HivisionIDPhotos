@@ -26,10 +26,10 @@ function LoginPanel({ onAuthenticated }: { onAuthenticated: (state: AuthState) =
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center px-5 py-8 text-ink">
-      <section className="w-full max-w-md rounded-[30px] border border-ink/10 bg-porcelain/85 p-8 shadow-panel">
+    <main className="flex min-h-screen items-center justify-center px-4 py-6 text-ink sm:px-5 sm:py-8">
+      <section className="w-full max-w-md rounded-[26px] border border-ink/10 bg-porcelain/85 p-5 shadow-panel sm:rounded-[30px] sm:p-8">
         <p className="font-mono text-[11px] uppercase tracking-[0.34em] text-slate">{t('appSubtitle')}</p>
-        <h1 className="mt-3 font-serif text-4xl leading-none tracking-[-0.04em]">{t('loginTitle')}</h1>
+        <h1 className="mt-3 font-serif text-3xl leading-none tracking-[-0.04em] sm:text-4xl">{t('loginTitle')}</h1>
         <p className="mt-4 text-sm leading-6 text-graphite">{t('loginIntro')}</p>
 
         <form className="mt-8 grid gap-4" onSubmit={handleSubmit}>

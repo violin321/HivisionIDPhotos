@@ -5,17 +5,19 @@ import { ResultPanel } from '../features/result/ResultPanel';
 import { TaskStatusRail } from '../features/idphoto-workflow/TaskStatusRail';
 import { WorkflowControls } from '../features/idphoto-workflow/WorkflowControls';
 import { UploadBay } from '../features/upload/UploadBay';
-import { apiCards } from '../lib/mock-data';
-import { usePreferences, type LanguagePreference, type ThemePreference } from '../lib/preferences';
+import { usePreferences, type LanguagePreference, type ThemeModePreference, type ThemePresetPreference } from '../lib/preferences';
 import {
   createTask,
   createUpload,
   getTask,
   getAdminStats,
-  templates,
+  getTemplates,
+  templates as fallbackTemplates,
   type AdminStats,
   type BackgroundColor,
+  type IdPhotoTemplate,
   type ProcessingTask,
+  type TaskOptions,
   type UploadHandle,
 } from '../lib/api-client';
 
@@ -36,26 +38,31 @@ function formatBytes(value: number) {
 function AdminStatusPanel({ stats, onRefresh }: { stats: AdminStats | null; onRefresh: () => void }) {
   const { t } = usePreferences();
   return (
-    <div className="mt-5 rounded-2xl border border-ink/10 bg-porcelain/70 p-4 text-xs leading-5 text-slate">
-      <div className="flex items-center justify-between gap-3">
+    <details className="mt-5 overflow-hidden rounded-2xl border border-ink/10 bg-porcelain/70 text-xs leading-5 text-slate" open>
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-4 marker:hidden">
         <p className="font-mono text-[11px] font-bold uppercase tracking-[0.22em] text-graphite">{t('adminStats')}</p>
-        <button type="button" onClick={onRefresh} className="rounded-full border border-ink/15 px-3 py-1 font-semibold uppercase tracking-[0.16em] text-graphite transition hover:border-ink/35">{t('refresh')}</button>
+        <div className="flex items-center gap-2">
+          <button type="button" onClick={(event) => { event.preventDefault(); onRefresh(); }} className="rounded-full border border-ink/15 px-3 py-1 font-semibold uppercase tracking-[0.16em] text-graphite transition hover:border-ink/35">{t('refresh')}</button>
+          <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-slate">⌄</span>
+        </div>
+      </summary>
+      <div className="border-t border-ink/10 px-4 pb-4 pt-3">
+        {stats ? (
+          <dl className="grid grid-cols-2 gap-2">
+            <div><dt>{t('phase')}</dt><dd className="font-mono text-ink">{stats.phase}</dd></div>
+            <div><dt>{t('logins24h')}</dt><dd className="font-mono text-ink">{stats.last24h.logins}</dd></div>
+            <div><dt>{t('uploads24h')}</dt><dd className="font-mono text-ink">{stats.last24h.uploads}</dd></div>
+            <div><dt>{t('tasksOkFail')}</dt><dd className="font-mono text-ink">{stats.last24h.tasksSucceeded}/{stats.last24h.tasksFailed}</dd></div>
+            <div><dt>{t('downloads')}</dt><dd className="font-mono text-ink">{stats.last24h.downloads}</dd></div>
+            <div><dt>{t('rateHits')}</dt><dd className="font-mono text-ink">{stats.last24h.rateLimitHits}</dd></div>
+            <div><dt>{t('uploadsDisk')}</dt><dd className="font-mono text-ink">{formatBytes(stats.runtime.uploadsBytes)}</dd></div>
+            <div><dt>{t('resultsDisk')}</dt><dd className="font-mono text-ink">{formatBytes(stats.runtime.resultsBytes)}</dd></div>
+          </dl>
+        ) : (
+          <p>{t('statsLoading')}</p>
+        )}
       </div>
-      {stats ? (
-        <dl className="mt-3 grid grid-cols-2 gap-2">
-          <div><dt>{t('phase')}</dt><dd className="font-mono text-ink">{stats.phase}</dd></div>
-          <div><dt>{t('logins24h')}</dt><dd className="font-mono text-ink">{stats.last24h.logins}</dd></div>
-          <div><dt>{t('uploads24h')}</dt><dd className="font-mono text-ink">{stats.last24h.uploads}</dd></div>
-          <div><dt>{t('tasksOkFail')}</dt><dd className="font-mono text-ink">{stats.last24h.tasksSucceeded}/{stats.last24h.tasksFailed}</dd></div>
-          <div><dt>{t('downloads')}</dt><dd className="font-mono text-ink">{stats.last24h.downloads}</dd></div>
-          <div><dt>{t('rateHits')}</dt><dd className="font-mono text-ink">{stats.last24h.rateLimitHits}</dd></div>
-          <div><dt>{t('uploadsDisk')}</dt><dd className="font-mono text-ink">{formatBytes(stats.runtime.uploadsBytes)}</dd></div>
-          <div><dt>{t('resultsDisk')}</dt><dd className="font-mono text-ink">{formatBytes(stats.runtime.resultsBytes)}</dd></div>
-        </dl>
-      ) : (
-        <p className="mt-3">{t('statsLoading')}</p>
-      )}
-    </div>
+    </details>
   );
 }
 
@@ -69,27 +76,29 @@ function HeroPlate({ previewUrl, background }: { previewUrl: string | null; back
   }[background];
 
   return (
-    <div className="relative mx-auto aspect-[3/4] w-full max-w-[310px] rounded-[30px] border border-ink/15 bg-[#ece6da] p-5 shadow-panel dark:bg-[#20262a]">
-      <div className="absolute -left-7 top-10 h-56 w-5 border-y border-ink/25">
-        <div className="ruler-edge h-full opacity-70" />
+    <div className="relative mx-auto w-full max-w-[310px] rounded-[30px] border border-ink/15 bg-[#ece6da] p-4 shadow-panel dark:bg-[#20262a]">
+      <div className="mb-3 flex items-center justify-between gap-2 px-1">
+        <span className="font-mono text-[10px] uppercase tracking-[0.22em] text-slate">{t('currentPhoto')}</span>
+        {previewUrl ? <span className="rounded-full border border-amber/35 bg-amber/10 px-2 py-1 text-[10px] font-semibold text-amber">Live</span> : null}
       </div>
-      <div className="absolute -right-5 bottom-8 rounded-full border border-amber/40 bg-amber/10 px-3 py-2 text-[10px] font-bold uppercase tracking-[0.22em] text-amber">
-        phase 5E
-      </div>
-      <div className="h-full rounded-[22px] border border-ink/10 bg-porcelain p-4">
-        <div className={`relative h-full overflow-hidden rounded-[18px] bg-gradient-to-b ${backgroundTone}`}>
+      <div className="rounded-[22px] border border-ink/10 bg-porcelain p-3">
+        <div className={`relative aspect-[3/4] rounded-[18px] bg-gradient-to-b ${backgroundTone}`}>
           {previewUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={previewUrl} alt={t('workbenchAlt')} className="absolute inset-x-[16%] bottom-0 h-[82%] w-[68%] rounded-t-[42%] object-cover object-top mix-blend-multiply grayscale-[10%]" />
+            <img src={previewUrl} alt={t('workbenchAlt')} className="absolute inset-0 h-full w-full rounded-[18px] object-contain object-center" />
           ) : (
-            <div className="absolute inset-x-0 bottom-0 flex flex-col items-center justify-end">
+            <div className="absolute inset-x-0 bottom-0 flex flex-col items-center justify-end overflow-hidden rounded-[18px]">
               <div className="mb-[-10px] h-24 w-24 rounded-full border border-ink/10 bg-[#c9bca9] shadow-inner" />
               <div className="h-40 w-44 rounded-t-[70px] border border-ink/10 bg-[#2f3a40]" />
             </div>
           )}
-          <div className="pointer-events-none absolute inset-x-6 top-[23%] border-t border-measurement/50" />
-          <div className="pointer-events-none absolute inset-x-6 top-[37%] border-t border-measurement/25" />
-          <div className="pointer-events-none absolute inset-y-6 left-1/2 border-l border-measurement/25" />
+          {!previewUrl ? (
+            <>
+              <div className="pointer-events-none absolute inset-x-6 top-[23%] border-t border-measurement/30" />
+              <div className="pointer-events-none absolute inset-x-6 top-[37%] border-t border-measurement/20" />
+              <div className="pointer-events-none absolute inset-y-6 left-1/2 border-l border-measurement/20" />
+            </>
+          ) : null}
         </div>
       </div>
     </div>
@@ -97,13 +106,18 @@ function HeroPlate({ previewUrl, background }: { previewUrl: string | null; back
 }
 
 function SettingsDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { t, theme, language, setTheme, setLanguage } = usePreferences();
+  const { t, themeMode, themePreset, language, setThemeMode, setThemePreset, setLanguage } = usePreferences();
   if (!open) return null;
 
-  const themeOptions: Array<{ value: ThemePreference; label: string }> = [
+  const themeModeOptions: Array<{ value: ThemeModePreference; label: string }> = [
     { value: 'light', label: t('themeLight') },
     { value: 'dark', label: t('themeDark') },
     { value: 'system', label: t('themeSystem') },
+  ];
+  const themePresetOptions: Array<{ value: ThemePresetPreference; label: string; accent: string }> = [
+    { value: 'precision', label: t('themePrecision'), accent: 'bg-measurement' },
+    { value: 'warm-paper', label: t('themeWarmPaper'), accent: 'bg-amber' },
+    { value: 'darkroom', label: t('themeDarkroom'), accent: 'bg-ink' },
   ];
   const languageOptions: Array<{ value: LanguagePreference; label: string }> = [
     { value: 'zh-CN', label: '中文（中国）' },
@@ -129,15 +143,35 @@ function SettingsDialog({ open, onClose }: { open: boolean; onClose: () => void 
             <h3 className="text-lg font-semibold">{t('appearance')}</h3>
             <p className="mt-1 text-sm leading-6 text-slate">{t('appearanceHint')}</p>
             <div className="mt-4 grid gap-2 sm:grid-cols-3" role="radiogroup" aria-label={t('appearance')}>
-              {themeOptions.map((option) => (
+              {themeModeOptions.map((option) => (
                 <button
                   key={option.value}
                   type="button"
                   role="radio"
-                  aria-checked={theme === option.value}
-                  onClick={() => setTheme(option.value)}
-                  className={`rounded-2xl border px-4 py-3 text-left text-sm font-semibold transition ${theme === option.value ? 'border-measurement bg-measurement/10 text-ink' : 'border-ink/10 bg-porcelain/70 text-graphite hover:border-ink/25'}`}
+                  aria-checked={themeMode === option.value}
+                  onClick={() => setThemeMode(option.value)}
+                  className={`rounded-2xl border px-4 py-3 text-left text-sm font-semibold transition ${themeMode === option.value ? 'border-measurement bg-measurement/10 text-ink' : 'border-ink/10 bg-porcelain/70 text-graphite hover:border-ink/25'}`}
                 >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </section>
+
+          <section className="rounded-[24px] border border-ink/10 bg-paper/55 p-4">
+            <h3 className="text-lg font-semibold">{t('themePreset')}</h3>
+            <p className="mt-1 text-sm leading-6 text-slate">{t('themePresetHint')}</p>
+            <div className="mt-4 grid gap-2 sm:grid-cols-3" role="radiogroup" aria-label={t('themePreset')}>
+              {themePresetOptions.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  role="radio"
+                  aria-checked={themePreset === option.value}
+                  onClick={() => setThemePreset(option.value)}
+                  className={`rounded-2xl border px-4 py-3 text-left text-sm font-semibold transition ${themePreset === option.value ? 'border-amber bg-amber/10 text-ink' : 'border-ink/10 bg-porcelain/70 text-graphite hover:border-ink/25'}`}
+                >
+                  <span className={`mb-3 block h-2 w-10 rounded-full ${option.accent}`} />
                   {option.label}
                 </button>
               ))}
@@ -164,23 +198,8 @@ function SettingsDialog({ open, onClose }: { open: boolean; onClose: () => void 
           </section>
 
           <section className="rounded-[24px] border border-ink/10 bg-ink p-4 text-porcelain">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <h3 className="text-lg font-semibold">{t('aiProvider')}</h3>
-                <p className="mt-1 max-w-2xl text-sm leading-6 text-[#d8d1c4]">{t('aiProviderHint')}</p>
-              </div>
-              <span className="rounded-full border border-amber/40 bg-amber/10 px-3 py-1 font-mono text-[10px] uppercase tracking-[0.2em] text-amber">{t('providerNotConnected')}</span>
-            </div>
-            <div className="mt-4 grid gap-3 md:grid-cols-2">
-              <div className="rounded-2xl border border-[#d8d1c4]/20 bg-[#d8d1c4]/10 p-4">
-                <p className="font-mono text-[10px] uppercase tracking-[0.22em] text-[#b7c9cc]">{t('currentProvider')}</p>
-                <p className="mt-2 font-semibold">local-derived-preview</p>
-              </div>
-              <div className="rounded-2xl border border-[#d8d1c4]/20 bg-[#d8d1c4]/10 p-4 opacity-75">
-                <p className="font-mono text-[10px] uppercase tracking-[0.22em] text-[#b7c9cc]">{t('futureProvider')}</p>
-                <p className="mt-2 font-semibold">{t('reservedReadonly')}</p>
-              </div>
-            </div>
+            <h3 className="text-lg font-semibold">{t('workspacePreferences')}</h3>
+            <p className="mt-1 max-w-2xl text-sm leading-6 text-[#d8d1c4]">{t('workspacePreferencesHint')}</p>
             <p className="mt-4 rounded-2xl border border-measurement/30 bg-measurement/10 p-3 text-sm leading-6 text-[#e7efe9]">{t('providerBoundary')}</p>
           </section>
         </div>
@@ -195,32 +214,47 @@ export default function StudioShell({ username, onLogout }: { username?: string 
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [upload, setUpload] = useState<UploadHandle | null>(null);
   const [task, setTask] = useState<ProcessingTask | null>(null);
-  const [selectedTemplate, setSelectedTemplate] = useState(templates[0].templateId);
+  const [templateOptions, setTemplateOptions] = useState<IdPhotoTemplate[]>(fallbackTemplates);
+  const [selectedTemplate, setSelectedTemplate] = useState(fallbackTemplates[0].templateId);
   const [selectedBackground, setSelectedBackground] = useState<BackgroundColor>('white');
   const [aiPreview, setAiPreview] = useState(false);
   const [busy, setBusy] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [activeLayer, setActiveLayer] = useState<'workbench' | 'maintenance'>('workbench');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [adminStats, setAdminStats] = useState<AdminStats | null>(null);
+  const [taskOptions, setTaskOptions] = useState<TaskOptions>({
+    background: 'white',
+    renderOfficialIdPhoto: true,
+    renderAiEnhancePreview: false,
+    headMeasureRatio: 0.2,
+    topDistance: 0.12,
+    topDistanceMax: 0.12,
+    dpi: 300,
+    whiteningStrength: 0,
+    brightnessStrength: 0,
+    contrastStrength: 0,
+    saturationStrength: 0,
+    sharpenStrength: 0,
+    imageKbMode: 'exact',
+    watermarkEnabled: false,
+    watermarkTextSize: 32,
+    watermarkTextOpacity: 0.35,
+    watermarkTextAngle: 30,
+    watermarkTextSpace: 75,
+    printLayoutEnabled: false,
+    layoutPaperSize: 'six-inch',
+    printLayoutSize: 'six-inch',
+    layoutCropLine: false,
+    horizontalFlip: false,
+    jpegFormat: false,
+    fiveInchPaper: false,
+    renderMode: 'solid',
+    customBackgroundEnabled: false,
+    customBackgroundHex: '#626BCE',
+  });
 
-  const template = useMemo(() => templates.find((item) => item.templateId === selectedTemplate), [selectedTemplate]);
-  const localizedStages = useMemo(() => [
-    { label: t('uploadStage'), detail: t('uploadStageDetail'), state: 'active' },
-    { label: t('specStage'), detail: t('specStageDetail'), state: 'pending' },
-    { label: t('taskStage'), detail: t('taskStageDetail'), state: 'pending' },
-    { label: t('resultStage'), detail: t('resultStageDetail'), state: 'pending' },
-    { label: t('aiPreviewStage'), detail: t('aiPreviewStageDetail'), state: 'pending' },
-  ], [t]);
-  const apiPurposeByPath: Record<string, string> = {
-    '/api/config': t('apiConfigPurpose'),
-    '/api/uploads': t('apiUploadsPurpose'),
-    '/api/tasks': t('apiTasksPurpose'),
-    '/api/tasks/{id}': t('apiTaskPollPurpose'),
-    '/api/templates': t('apiTemplatesPurpose'),
-    '/api/health': t('apiHealthPurpose'),
-    '/api/admin/stats': t('apiAdminStatsPurpose'),
-  };
-
+  const template = useMemo(() => templateOptions.find((item) => item.templateId === selectedTemplate), [selectedTemplate, templateOptions]);
   async function refreshAdminStats() {
     try {
       setAdminStats(await getAdminStats());
@@ -229,8 +263,20 @@ export default function StudioShell({ username, onLogout }: { username?: string 
     }
   }
 
+  async function refreshTemplates() {
+    try {
+      const nextTemplates = await getTemplates();
+      if (nextTemplates.length > 0) {
+        setTemplateOptions(nextTemplates);
+        setSelectedTemplate((current) => nextTemplates.some((item) => item.templateId === current) ? current : nextTemplates[0].templateId);
+      }
+    } catch {
+      // Keep fallback templates so the studio still renders while the API warms up.
+    }
+  }
+
   useEffect(() => {
-    void refreshAdminStats();
+    void Promise.all([refreshAdminStats(), refreshTemplates()]);
   }, []);
 
   useEffect(() => {
@@ -260,6 +306,10 @@ export default function StudioShell({ username, onLogout }: { username?: string 
     }
   }
 
+  function patchTaskOptions(patch: Partial<TaskOptions>) {
+    setTaskOptions((current) => ({ ...current, ...patch }));
+  }
+
   async function handleCreateTask() {
     if (!upload) return;
     setBusy(true);
@@ -271,7 +321,8 @@ export default function StudioShell({ username, onLogout }: { username?: string 
         platform: 'web',
         aiMode: aiPreview ? 'preview' : 'none',
         options: {
-          background: selectedBackground,
+          ...taskOptions,
+          background: taskOptions.customBackgroundEnabled ? 'custom' : selectedBackground,
           renderOfficialIdPhoto: true,
           renderAiEnhancePreview: aiPreview,
         },
@@ -297,100 +348,110 @@ export default function StudioShell({ username, onLogout }: { username?: string 
   }
 
   return (
-    <main className="min-h-screen px-5 py-6 text-ink md:px-10 lg:px-14">
+    <main className="min-h-screen px-4 py-4 text-ink sm:px-5 sm:py-6 md:px-10 lg:px-14">
       <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
-      <section className="mx-auto max-w-7xl overflow-hidden rounded-[34px] border border-ink/10 bg-porcelain/70 shadow-panel">
-        <div className="grid min-h-[calc(100vh-3rem)] lg:grid-cols-[1.08fr_.92fr]">
-          <div className="relative p-7 md:p-11 lg:p-14">
-            <div className="mb-12 flex items-center justify-between gap-5 border-b border-ink/10 pb-4">
-              <div>
-                <p className="font-mono text-[11px] uppercase tracking-[0.34em] text-slate">{t('appSubtitle')}</p>
-                <h1 className="mt-2 font-serif text-4xl leading-[0.95] tracking-[-0.04em] md:text-6xl">{t('studioTitle')}</h1>
-              </div>
-              <div className="flex flex-wrap items-center justify-end gap-3">
-                {username ? <span className="hidden font-mono text-[11px] uppercase tracking-[0.22em] text-slate md:inline">{username}</span> : null}
+      <section className="mx-auto max-w-7xl overflow-hidden rounded-[26px] border border-ink/10 bg-porcelain/72 shadow-panel sm:rounded-[30px]">
+        <div className="min-h-[calc(100vh-2rem)] p-4 sm:p-6 md:p-8 lg:p-10">
+          <div className="mb-5 flex flex-col gap-4 border-b border-ink/10 pb-4 md:flex-row md:items-center md:justify-between">
+            <div className="min-w-0">
+              <p className="font-mono text-[10px] uppercase tracking-[0.3em] text-slate">{t('appSubtitle')}</p>
+              <h1 className="mt-1 text-balance font-serif text-[2rem] leading-none tracking-[-0.04em] sm:text-[2.65rem] md:text-5xl">{t('studioTitle')}</h1>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 md:justify-end">
+              {username ? <span className="hidden font-mono text-[11px] uppercase tracking-[0.22em] text-slate md:inline">{username}</span> : null}
+              <button
+                type="button"
+                onClick={() => setSettingsOpen(true)}
+                className="rounded-full border border-measurement/30 bg-measurement/10 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-measurement transition hover:border-measurement/60"
+              >
+                {t('settings')}
+              </button>
+              {onLogout ? (
                 <button
                   type="button"
-                  onClick={() => setSettingsOpen(true)}
-                  className="rounded-full border border-measurement/30 bg-measurement/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-measurement transition hover:border-measurement/60"
+                  onClick={() => void onLogout()}
+                  className="rounded-full border border-ink/15 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-graphite transition hover:border-ink/35 hover:text-ink"
                 >
-                  {t('settings')}
+                  {t('logout')}
                 </button>
-                {onLogout ? (
-                  <button
-                    type="button"
-                    onClick={() => void onLogout()}
-                    className="rounded-full border border-ink/15 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-graphite transition hover:border-ink/35 hover:text-ink"
-                  >
-                    {t('logout')}
-                  </button>
-                ) : null}
-                <StatusPill>{t('phaseBadge')}</StatusPill>
-              </div>
-            </div>
-
-            <div className="grid gap-8 lg:grid-cols-[1fr_240px]">
-              <div>
-                <p className="max-w-2xl text-lg leading-8 text-graphite md:text-xl">{t('studioIntro')}</p>
-                <div className="mt-8">
-                  <UploadBay file={file} previewUrl={previewUrl} isUploading={busy && !task} onSelect={handleSelect} />
-                </div>
-              </div>
-              <HeroPlate previewUrl={previewUrl} background={selectedBackground} />
-            </div>
-
-            <div className="mt-10 grid gap-3 md:grid-cols-5">
-              {localizedStages.map((stage, index) => (
-                <div key={stage.label} className="precision-card rounded-[18px] p-4">
-                  <div className="flex items-center justify-between">
-                    <span className="font-mono text-[11px] text-slate">0{index + 1}</span>
-                    <span className={stage.state === 'active' ? 'h-2 w-2 rounded-full bg-amber' : 'h-2 w-2 rounded-full bg-line'} />
-                  </div>
-                  <h3 className="mt-4 font-semibold">{stage.label}</h3>
-                  <p className="mt-2 text-xs leading-5 text-slate">{stage.detail}</p>
-                </div>
-              ))}
-            </div>
-
-            <div className="mt-6">
-              <WorkflowControls
-                templates={templates}
-                selectedTemplate={selectedTemplate}
-                selectedBackground={selectedBackground}
-                aiPreview={aiPreview}
-                canCreate={Boolean(upload)}
-                isWorking={busy || task?.status === 'queued' || task?.status === 'processing'}
-                onTemplateChange={setSelectedTemplate}
-                onBackgroundChange={setSelectedBackground}
-                onAiPreviewChange={setAiPreview}
-                onCreateTask={handleCreateTask}
-              />
+              ) : null}
+              <StatusPill>{t('phaseBadge')}</StatusPill>
             </div>
           </div>
 
-          <aside className="border-t border-ink/10 bg-paper/60 p-7 md:p-11 lg:border-l lg:border-t-0 lg:p-12">
-            <TaskStatusRail upload={upload} task={task} errorMessage={errorMessage} />
+          <div className="mb-6 flex flex-wrap gap-2 rounded-[18px] border border-ink/10 bg-paper/55 p-1.5" role="tablist" aria-label="Workspace layers">
+            <button type="button" role="tab" aria-selected={activeLayer === 'workbench'} onClick={() => setActiveLayer('workbench')} className={`rounded-[14px] px-4 py-2 text-sm font-semibold transition ${activeLayer === 'workbench' ? 'bg-ink text-porcelain shadow-lg shadow-ink/15' : 'text-graphite hover:bg-porcelain/70'}`}>{t('workbenchTab')}</button>
+            <button type="button" role="tab" aria-selected={activeLayer === 'maintenance'} onClick={() => setActiveLayer('maintenance')} className={`rounded-[14px] px-4 py-2 text-sm font-semibold transition ${activeLayer === 'maintenance' ? 'bg-ink text-porcelain shadow-lg shadow-ink/15' : 'text-graphite hover:bg-porcelain/70'}`}>{t('maintenanceTab')}</button>
+          </div>
 
-            <div className="mt-5 rounded-2xl border border-ink/10 bg-porcelain/70 p-4 text-xs leading-5 text-slate">{t('privacyNote')}</div>
+          {activeLayer === 'workbench' ? (
+            <div className="grid gap-5 xl:grid-cols-[minmax(0,0.98fr)_minmax(340px,0.62fr)] xl:items-start xl:gap-7">
+              <div className="order-1 xl:col-start-1">
+                <p className="mb-4 max-w-2xl text-sm leading-6 text-graphite sm:text-base">{t('studioIntro')}</p>
+                <UploadBay file={file} previewUrl={previewUrl} isUploading={busy && !task} onSelect={handleSelect} />
+              </div>
 
-            <AdminStatusPanel stats={adminStats} onRefresh={() => void refreshAdminStats()} />
+              <div className="order-3 xl:col-start-1 xl:row-start-2">
+                <WorkflowControls
+                  templates={templateOptions}
+                  selectedTemplate={selectedTemplate}
+                  selectedBackground={selectedBackground}
+                  aiPreview={aiPreview}
+                  canCreate={Boolean(upload)}
+                  isWorking={busy || task?.status === 'queued' || task?.status === 'processing'}
+                  taskOptions={taskOptions}
+                  onTemplateChange={setSelectedTemplate}
+                  onBackgroundChange={(value) => {
+                    setSelectedBackground(value);
+                    patchTaskOptions({ background: value });
+                  }}
+                  onAiPreviewChange={setAiPreview}
+                  onTaskOptionsChange={patchTaskOptions}
+                  onCreateTask={handleCreateTask}
+                />
+              </div>
 
-            <div className="mt-5">
-              <ResultPanel task={task} template={template} selectedBackground={selectedBackground} sourcePreviewUrl={previewUrl} />
-            </div>
-
-            <div className="mt-5 grid gap-3">
-              {apiCards.map(([method, path, purpose]) => (
-                <div key={path} className="grid grid-cols-[64px_1fr] gap-3 rounded-2xl border border-ink/10 bg-porcelain/70 p-4 text-sm">
-                  <span className="font-mono text-xs font-bold text-measurement">{method}</span>
-                  <div>
-                    <p className="font-mono text-xs text-ink">{path}</p>
-                    <p className="mt-1 text-xs leading-5 text-slate">{apiPurposeByPath[path] ?? purpose}</p>
+              <aside className="contents xl:sticky xl:top-6 xl:order-2 xl:col-start-2 xl:row-span-2 xl:row-start-1 xl:block xl:min-w-0 xl:space-y-5">
+                <section className="order-2 rounded-[26px] border border-ink/10 bg-paper/70 p-4 shadow-sm xl:order-none xl:p-5">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <div>
+                      <p className="font-mono text-[10px] uppercase tracking-[0.26em] text-measurement">{t('currentPhoto')}</p>
+                      <h2 className="mt-1 text-lg font-semibold tracking-[-0.03em]">{file ? file.name : t('noMaterial')}</h2>
+                    </div>
+                    <span className="rounded-full border border-ink/10 bg-porcelain/70 px-3 py-1 font-mono text-[10px] uppercase tracking-[0.16em] text-slate">Preview</span>
                   </div>
+                  <HeroPlate previewUrl={previewUrl} background={selectedBackground} />
+                </section>
+
+                <div className="order-4 xl:order-none">
+                  <TaskStatusRail uploadReady={Boolean(upload)} task={task} errorMessage={errorMessage} />
                 </div>
-              ))}
+
+                <div className="order-5 rounded-2xl border border-ink/10 bg-porcelain/62 p-4 text-xs leading-5 text-slate xl:order-none">{t('privacyNote')}</div>
+
+                <div className="order-6 xl:order-none">
+                  <ResultPanel task={task} template={template} selectedBackground={selectedBackground} />
+                </div>
+              </aside>
             </div>
-          </aside>
+          ) : (
+            <section className="precision-card rounded-[28px] p-6">
+              <p className="font-mono text-[11px] uppercase tracking-[0.28em] text-measurement">{t('maintenanceTab')}</p>
+              <h2 className="mt-2 font-serif text-4xl leading-none tracking-[-0.04em]">{t('maintenanceTitle')}</h2>
+              <p className="mt-3 max-w-3xl text-sm leading-6 text-slate">{t('maintenanceIntro')}</p>
+              <AdminStatusPanel stats={adminStats} onRefresh={() => void refreshAdminStats()} />
+              <div className="mt-5 rounded-[24px] border border-ink/10 bg-porcelain/75 p-4">
+                <p className="font-mono text-[11px] uppercase tracking-[0.22em] text-slate">{t('internalDiagnostics')}</p>
+                <dl className="mt-4 grid gap-3 text-sm md:grid-cols-2">
+                  <div className="rounded-2xl border border-line bg-paper/60 p-3"><dt className="text-slate">uploadId</dt><dd className="mt-1 break-all font-mono text-xs">{upload?.uploadId ?? '—'}</dd></div>
+                  <div className="rounded-2xl border border-line bg-paper/60 p-3"><dt className="text-slate">fileId</dt><dd className="mt-1 break-all font-mono text-xs">{upload?.fileId ?? '—'}</dd></div>
+                  <div className="rounded-2xl border border-line bg-paper/60 p-3"><dt className="text-slate">taskId</dt><dd className="mt-1 break-all font-mono text-xs">{task?.taskId ?? '—'}</dd></div>
+                  <div className="rounded-2xl border border-line bg-paper/60 p-3"><dt className="text-slate">platform / phase</dt><dd className="mt-1 font-mono text-xs">{task?.platform ?? 'web'} / {adminStats?.phase ?? '—'}</dd></div>
+                  <div className="rounded-2xl border border-line bg-paper/60 p-3 md:col-span-2"><dt className="text-slate">task status / error</dt><dd className="mt-1 break-all font-mono text-xs">{task?.status ?? 'idle'}{task?.error ? ` · ${task.error.code}: ${task.error.message}` : errorMessage ? ` · ${errorMessage}` : ''}</dd></div>
+                </dl>
+              </div>
+            </section>
+          )}
         </div>
       </section>
     </main>
