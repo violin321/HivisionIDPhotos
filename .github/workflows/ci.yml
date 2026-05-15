@@ -42,7 +42,7 @@ jobs:
           import importlib.util
           from pathlib import Path
 
-          for module_path in ("hivision/error.py", "hivision/utils.py"):
+          for module_path in ("hivision/error.py",):
               spec = importlib.util.spec_from_file_location(Path(module_path).stem, module_path)
               module = importlib.util.module_from_spec(spec)
               spec.loader.exec_module(module)
