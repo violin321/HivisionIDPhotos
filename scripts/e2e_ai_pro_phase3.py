@@ -29,7 +29,11 @@ def app_cookie(base_url: str) -> str:
     status, headers, _ = http_request("POST", f"{base_url}/api/auth/login", body, {"Content-Type": "application/json"})
     if status != 200:
         raise SystemExit(f"login failed with HTTP {status}")
-    return headers.get("Set-Cookie", "").split(";", 1)[0]
+    normalized_headers = {key.lower(): value for key, value in headers.items()}
+    cookie = normalized_headers.get("set-cookie", "").split(";", 1)[0]
+    if not cookie:
+        raise SystemExit("login did not return a session cookie")
+    return cookie
 
 
 def basic_auth_header() -> dict[str, str]:
@@ -133,7 +137,8 @@ def main() -> int:
         "uploadId": upload["uploadId"], "templateId": "cn-id-1inch", "platform": "web", "aiMode": "none", "options": {"background": "blue"},
         "aiPro": {"enabled": True, "modes": ["ai_blue_formal_id_photo"], "promptParams": {}, "consentAccepted": False},
     }, cookie=cookie, expect_status={400})
-    if status != 400 or body.get("error", {}).get("code") != "AI_PRO_CONSENT_REQUIRED":
+    error_body = body.get("error") or body.get("detail", {}).get("error", {})
+    if status != 400 or error_body.get("code") != "AI_PRO_CONSENT_REQUIRED":
         raise SystemExit(f"consent check failed: HTTP {status} {json.dumps(body, ensure_ascii=False)}")
 
     # no-key fallback remains a successful core task with explicit AI Pro metadata.
