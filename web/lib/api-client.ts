@@ -60,6 +60,17 @@ export interface AiProRequest {
   consentAccepted: boolean;
 }
 
+export interface AiProQualityReport {
+  score: number;
+  passed: boolean;
+  checks: Record<string, unknown>;
+  warnings: QualityIssue[];
+  errors: QualityIssue[];
+  fallbackReason?: string | null;
+  fallbackToFree?: boolean;
+  corePassed?: boolean;
+}
+
 export interface AiProResult {
   mode: AiProMode | string;
   status: string;
@@ -70,6 +81,11 @@ export interface AiProResult {
   promptTemplateId: string;
   templateVersion: string;
   paid: boolean;
+  resultTier?: 'pro' | string;
+  isPaidFeature?: boolean;
+  fallbackToFree?: boolean;
+  qualityGate?: Record<string, unknown> | null;
+  aiQualityReport?: AiProQualityReport | null;
   qualityReport?: Record<string, unknown> | null;
   promptMetadata: Record<string, unknown>;
   mock?: boolean;

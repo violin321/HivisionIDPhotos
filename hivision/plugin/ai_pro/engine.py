@@ -9,6 +9,45 @@ from pathlib import Path
 from typing import Any
 
 import requests
+from PIL import Image, UnidentifiedImageError
+
+_PROVIDER_SIZES: tuple[tuple[str, float], ...] = (
+    ("1024x1536", 1024 / 1536),
+    ("1536x1024", 1536 / 1024),
+    ("1024x1024", 1.0),
+)
+
+
+def _normalize_image_size(value: str | None) -> str:
+    size = (value or "").strip().lower()
+    if not size:
+        return ""
+    if size == "auto":
+        return "auto"
+    if "x" in size:
+        width, height = size.split("x", 1)
+        if width.isdigit() and height.isdigit() and int(width) > 0 and int(height) > 0:
+            return f"{int(width)}x{int(height)}"
+    return "auto"
+
+
+def _normalize_image_size_policy(value: str | None) -> str:
+    policy = (value or "auto").strip().lower()
+    return policy if policy in {"auto", "match-aspect"} else "auto"
+
+
+def _match_aspect_size(target_spec: dict[str, Any] | None) -> str | None:
+    if not target_spec:
+        return None
+    try:
+        width = float(target_spec.get("width") or 0)
+        height = float(target_spec.get("height") or 0)
+    except (TypeError, ValueError):
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    target_ratio = width / height
+    return min(_PROVIDER_SIZES, key=lambda item: abs(item[1] - target_ratio))[0]
 
 
 @dataclass(frozen=True)
@@ -19,6 +58,8 @@ class AIProEngineConfig:
     model: str = "gpt-image-2"
     timeout_seconds: float = 45.0
     retry_count: int = 0
+    image_size: str = "auto"
+    image_size_policy: str = "auto"
 
     @classmethod
     def from_env(cls) -> "AIProEngineConfig":
@@ -28,9 +69,11 @@ class AIProEngineConfig:
         model = os.getenv("GPT_IMAGE_MODEL") or os.getenv("OPENAI_IMAGE_MODEL") or "gpt-image-2"
         timeout = float(os.getenv("AI_PRO_TIMEOUT_SECONDS") or os.getenv("GPT_IMAGE_TIMEOUT") or os.getenv("OPENAI_IMAGE_TIMEOUT") or "45")
         retry = max(0, min(1, int(os.getenv("AI_PRO_RETRY_COUNT") or "0")))
+        image_size = _normalize_image_size(os.getenv("GPT_IMAGE_SIZE") or "auto")
+        image_size_policy = _normalize_image_size_policy(os.getenv("GPT_IMAGE_SIZE_POLICY") or "auto")
         if not api_key:
             provider = "mock"
-        return cls(provider=provider, api_base=api_base, api_key=api_key, model=model, timeout_seconds=timeout, retry_count=retry)
+        return cls(provider=provider, api_base=api_base, api_key=api_key, model=model, timeout_seconds=timeout, retry_count=retry, image_size=image_size, image_size_policy=image_size_policy)
 
     @property
     def configured(self) -> bool:
@@ -55,9 +98,10 @@ class AIProEngine:
     def __init__(self, config: AIProEngineConfig | None = None):
         self.config = config or AIProEngineConfig.from_env()
 
-    def run_blue_formal_id_photo(self, *, input_path: Path, output_dir: Path, final_prompt: str, template_id: str, template_version: str) -> AIProEngineResult:
+    def run_blue_formal_id_photo(self, *, input_path: Path, output_dir: Path, final_prompt: str, template_id: str, template_version: str, provider_size: str | None = None, target_spec: dict[str, Any] | None = None) -> AIProEngineResult:
         started = time.time()
         prompt_hash = hashlib.sha256(final_prompt.encode("utf-8")).hexdigest()[:16]
+        resolved_provider_size = self.resolve_provider_size(provider_size=provider_size, target_spec=target_spec)
         base_metadata: dict[str, Any] = {
             "mode": "ai_blue_formal_id_photo",
             "provider": self.config.provider if self.config.configured else "mock",
@@ -69,6 +113,8 @@ class AIProEngine:
             "mock": not self.config.configured,
             "fallback": not self.config.configured,
             "finalPromptHash": prompt_hash,
+            "providerSizePolicy": self.config.image_size_policy,
+            "providerSizeRequested": resolved_provider_size,
         }
         output_dir.mkdir(parents=True, exist_ok=True)
         if not self.config.configured:
@@ -78,9 +124,17 @@ class AIProEngine:
         last_error: str | None = None
         for attempt in range(self.config.retry_count + 1):
             try:
-                image_b64 = self._call_provider(input_path=input_path, prompt=final_prompt)
+                image_b64 = self._call_provider(input_path=input_path, prompt=final_prompt, provider_size=resolved_provider_size)
                 output_path = output_dir / "ai_blue_formal_id_photo.png"
                 output_path.write_bytes(base64.b64decode(self._strip_data_url(image_b64)))
+                output_dimensions = self._image_dimensions(output_path)
+                if output_dimensions:
+                    width, height = output_dimensions
+                    base_metadata.update({
+                        "providerSizeUsed": [width, height],
+                        "providerOutputSize": [width, height],
+                        "providerAspectRatio": round(width / height, 6) if height else None,
+                    })
                 base_metadata.update({"mock": False, "fallback": False, "durationMs": int((time.time() - started) * 1000)})
                 return AIProEngineResult(status="completed", image_path=output_path, metadata=base_metadata)
             except requests.Timeout:
@@ -95,7 +149,17 @@ class AIProEngine:
         base_metadata.update({"providerStatus": "error", "fallback": True, "errorCode": last_error or "PROVIDER_ERROR", "durationMs": int((time.time() - started) * 1000)})
         return AIProEngineResult(status="fallback", image_path=None, metadata=base_metadata)
 
-    def _call_provider(self, *, input_path: Path, prompt: str) -> str:
+    def resolve_provider_size(self, *, provider_size: str | None = None, target_spec: dict[str, Any] | None = None) -> str:
+        explicit_size = _normalize_image_size(provider_size or "")
+        if explicit_size:
+            return explicit_size
+        if self.config.image_size and self.config.image_size != "auto":
+            return self.config.image_size
+        if self.config.image_size_policy == "match-aspect":
+            return _match_aspect_size(target_spec) or "auto"
+        return "auto"
+
+    def _call_provider(self, *, input_path: Path, prompt: str, provider_size: str) -> str:
         with input_path.open("rb") as image_file:
             response = requests.post(
                 f"{self.config.api_base.rstrip('/')}/images/edits",
@@ -103,7 +167,7 @@ class AIProEngine:
                 data={
                     "model": self.config.model,
                     "prompt": prompt,
-                    "size": "1024x1024",
+                    "size": provider_size,
                     "response_format": "b64_json",
                 },
                 files={"image": (input_path.name, image_file, self._mime_type(input_path))},
@@ -125,6 +189,14 @@ class AIProEngine:
         response = requests.get(url, timeout=self.config.timeout_seconds)
         response.raise_for_status()
         return base64.b64encode(response.content).decode("ascii")
+
+    @staticmethod
+    def _image_dimensions(path: Path) -> tuple[int, int] | None:
+        try:
+            with Image.open(path) as image:
+                return int(image.width), int(image.height)
+        except (OSError, UnidentifiedImageError):
+            return None
 
     @staticmethod
     def _mime_type(path: Path) -> str:
