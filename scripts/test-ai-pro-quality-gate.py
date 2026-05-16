@@ -11,7 +11,8 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from deploy_api import build_ai_pro_mock_results  # noqa: E402
-from hivision.plugin.ai_pro.quality import evaluate_ai_pro_quality  # noqa: E402
+import hivision.plugin.ai_pro.quality as quality_module  # noqa: E402
+from hivision.plugin.ai_pro.quality import compare_identity_geometry, evaluate_ai_pro_quality  # noqa: E402
 
 
 MODE = "ai_blue_formal_id_photo"
@@ -106,6 +107,96 @@ def test_background_deviation_fails_to_fallback() -> None:
         assert_true(report["fallbackReason"] == "AI_PRO_BACKGROUND_COLOR_FAILED", "fallback reason should be auditable")
 
 
+
+def test_identity_geometry_passes_for_small_face_box_changes() -> None:
+    check = compare_identity_geometry(
+        source_rectangle=[90, 100, 110, 140],
+        source_shape=(413, 295, 3),
+        ai_rectangle=[92, 103, 108, 138],
+        ai_shape=(413, 295, 3),
+    )
+    assert_true(check["status"] == "passed", "small face-box movement should pass identity guard")
+    assert_true(check["centerDelta"]["distance"] < check["centerDelta"]["failThreshold"], "center delta should stay below fail threshold")
+
+
+def test_identity_geometry_warns_for_moderate_face_box_drift() -> None:
+    check = compare_identity_geometry(
+        source_rectangle=[90, 100, 110, 140],
+        source_shape=(413, 295, 3),
+        ai_rectangle=[108, 121, 110, 140],
+        ai_shape=(413, 295, 3),
+    )
+    assert_true(check["status"] == "warning", "moderate face-box movement should warn but not fallback")
+
+
+def test_identity_geometry_fails_for_obvious_face_box_drift() -> None:
+    check = compare_identity_geometry(
+        source_rectangle=[90, 100, 110, 140],
+        source_shape=(413, 295, 3),
+        ai_rectangle=[150, 170, 70, 90],
+        ai_shape=(413, 295, 3),
+    )
+    assert_true(check["status"] == "failed", "obvious face-box center/size drift should fail identity guard")
+    assert_true(check["sizeRatioDelta"] > check["sizeRatioThresholds"]["fail"] or check["centerDelta"]["distance"] > check["centerDelta"]["failThreshold"], "failed guard should expose failing metric")
+
+
+def test_identity_check_unavailable_warns_not_fails() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        source = root / "source.png"
+        candidate = root / "candidate.png"
+        write_solid(source, BLUE_RGB, (295, 413))
+        write_solid(candidate, BLUE_RGB, (295, 413))
+        report = evaluate_ai_pro_quality(
+            ai_image_path=candidate,
+            source_image_path=source,
+            output_dir=root,
+            task_id="task_identity_unavailable",
+            target_spec=TARGET_SPEC,
+            background_rgb=BLUE_RGB,
+            free_result=FREE_RESULT,
+            core_quality_report=CORE_QUALITY,
+        )
+        assert_true(report["passed"] is True, "unavailable identity detection should not hard fail")
+        assert_true(report["checks"]["identity"]["status"] == "unavailable", "identity status should be unavailable")
+        assert_true(any(item["code"] == "AI_PRO_IDENTITY_CHECK_UNAVAILABLE" for item in report["warnings"]), "unavailable identity check should be auditable warning")
+
+
+def test_identity_drift_failure_marks_quality_fallback() -> None:
+    original_detector = quality_module._detect_face_count
+
+    def fake_detector(image_rgb: np.ndarray):
+        if tuple(int(v) for v in image_rgb[0, 0, :3]) == BLUE_RGB:
+            return 1, "test_detector", [[150, 170, 70, 90]]
+        return 1, "test_detector", [[90, 100, 110, 140]]
+
+    quality_module._detect_face_count = fake_detector
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source.png"
+            candidate = root / "candidate.png"
+            write_solid(source, (10, 20, 30), (295, 413))
+            write_solid(candidate, BLUE_RGB, (295, 413))
+            report = evaluate_ai_pro_quality(
+                ai_image_path=candidate,
+                source_image_path=source,
+                output_dir=root,
+                task_id="task_identity_fail",
+                target_spec=TARGET_SPEC,
+                background_rgb=BLUE_RGB,
+                free_result=FREE_RESULT,
+                core_quality_report=CORE_QUALITY,
+            )
+    finally:
+        quality_module._detect_face_count = original_detector
+
+    assert_true(report["passed"] is False, "identity drift should fail quality gate")
+    assert_true(report["fallbackToFree"] is True, "identity drift should fallback to Free Core")
+    assert_true(report["fallbackReason"] == "AI_PRO_IDENTITY_DRIFT_FAILED", "identity drift should expose dedicated fallback reason")
+    assert_true(report["checks"]["identity"]["status"] == "failed", "identity check should be marked failed")
+
+
 def test_fallback_result_metadata_contains_quality_status() -> None:
     fallback = build_ai_pro_mock_results(
         "task_quality_failed",
@@ -142,6 +233,11 @@ def main() -> None:
     test_square_candidate_fails_without_stretched_derivative()
     test_same_ratio_candidate_resizes_with_warning()
     test_background_deviation_fails_to_fallback()
+    test_identity_geometry_passes_for_small_face_box_changes()
+    test_identity_geometry_warns_for_moderate_face_box_drift()
+    test_identity_geometry_fails_for_obvious_face_box_drift()
+    test_identity_check_unavailable_warns_not_fails()
+    test_identity_drift_failure_marks_quality_fallback()
     test_fallback_result_metadata_contains_quality_status()
     test_free_result_is_unchanged_by_ai_pro_failure()
     print("AI Pro quality gate tests passed")

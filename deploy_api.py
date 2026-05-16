@@ -1298,6 +1298,7 @@ def build_ai_pro_results(task_id: str, result_dir: Path, ai_pro: dict[str, Any],
         if engine_result.status == "completed" and engine_result.image_path:
             ai_quality_report = evaluate_ai_pro_quality(
                 ai_image_path=engine_result.image_path,
+                source_image_path=result_dir / input_filename,
                 output_dir=result_dir,
                 task_id=task_id,
                 target_spec=spec_context["spec"],

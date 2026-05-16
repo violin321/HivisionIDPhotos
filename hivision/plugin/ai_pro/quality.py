@@ -12,6 +12,11 @@ BACKGROUND_MEAN_DELTA_FAIL_THRESHOLD = 45.0
 BACKGROUND_MEAN_DELTA_WARN_THRESHOLD = 22.0
 ASPECT_RATIO_MISMATCH_FAIL_THRESHOLD = 0.03
 ASPECT_RATIO_PROPORTIONAL_RESIZE_THRESHOLD = 0.001
+IDENTITY_CENTER_DELTA_WARN_THRESHOLD = 0.07
+IDENTITY_CENTER_DELTA_FAIL_THRESHOLD = 0.12
+IDENTITY_SIZE_RATIO_DELTA_WARN_THRESHOLD = 0.18
+IDENTITY_SIZE_RATIO_DELTA_FAIL_THRESHOLD = 0.30
+
 
 
 def _issue(code: str, message: str, severity: str = "warning", metric: str | None = None) -> dict[str, Any]:
@@ -60,9 +65,123 @@ def _detect_face_count(image_rgb: np.ndarray) -> tuple[int | None, str, list[lis
         return None, "unavailable", []
 
 
+def _face_payload(rectangle: list[int], image_shape: tuple[int, ...]) -> dict[str, Any]:
+    height, width = image_shape[:2]
+    x, y, w, h = [int(v) for v in rectangle]
+    center_x = (x + w / 2) / width if width else 0.0
+    center_y = (y + h / 2) / height if height else 0.0
+    area_ratio = (w * h) / (width * height) if width and height else 0.0
+    width_ratio = w / width if width else 0.0
+    height_ratio = h / height if height else 0.0
+    return {
+        "rectangle": [x, y, w, h],
+        "center": {"x": round(center_x, 4), "y": round(center_y, 4)},
+        "widthRatio": round(width_ratio, 4),
+        "heightRatio": round(height_ratio, 4),
+        "areaRatio": round(area_ratio, 4),
+    }
+
+
+def compare_identity_geometry(
+    *,
+    source_rectangle: list[int],
+    source_shape: tuple[int, ...],
+    ai_rectangle: list[int],
+    ai_shape: tuple[int, ...],
+) -> dict[str, Any]:
+    """Compare face-box geometry using normalized, explainable metrics."""
+
+    source_face = _face_payload(source_rectangle, source_shape)
+    ai_face = _face_payload(ai_rectangle, ai_shape)
+    center_dx = abs(float(source_face["center"]["x"]) - float(ai_face["center"]["x"]))
+    center_dy = abs(float(source_face["center"]["y"]) - float(ai_face["center"]["y"]))
+    center_distance = float((center_dx ** 2 + center_dy ** 2) ** 0.5)
+    source_area_ratio = float(source_face["areaRatio"])
+    ai_area_ratio = float(ai_face["areaRatio"])
+    if source_area_ratio > 0:
+        size_ratio_delta = abs(ai_area_ratio - source_area_ratio) / source_area_ratio
+    else:
+        size_ratio_delta = 0.0 if ai_area_ratio == 0 else 1.0
+
+    status = "passed"
+    if center_distance > IDENTITY_CENTER_DELTA_FAIL_THRESHOLD or size_ratio_delta > IDENTITY_SIZE_RATIO_DELTA_FAIL_THRESHOLD:
+        status = "failed"
+    elif center_distance > IDENTITY_CENTER_DELTA_WARN_THRESHOLD or size_ratio_delta > IDENTITY_SIZE_RATIO_DELTA_WARN_THRESHOLD:
+        status = "warning"
+
+    return {
+        "sourceFace": source_face,
+        "aiFace": ai_face,
+        "centerDelta": {
+            "x": round(center_dx, 4),
+            "y": round(center_dy, 4),
+            "distance": round(center_distance, 4),
+            "warnThreshold": IDENTITY_CENTER_DELTA_WARN_THRESHOLD,
+            "failThreshold": IDENTITY_CENTER_DELTA_FAIL_THRESHOLD,
+        },
+        "sizeRatioDelta": round(size_ratio_delta, 4),
+        "sizeRatioThresholds": {
+            "warn": IDENTITY_SIZE_RATIO_DELTA_WARN_THRESHOLD,
+            "fail": IDENTITY_SIZE_RATIO_DELTA_FAIL_THRESHOLD,
+        },
+        "status": status,
+    }
+
+
+def _read_rgb_image(path: Path | str | None) -> np.ndarray | None:
+    if not path:
+        return None
+    try:
+        with Image.open(path) as image:
+            return np.array(image.convert("RGB"))
+    except (UnidentifiedImageError, OSError, ValueError):
+        return None
+
+
+def _evaluate_identity_check(source_rgb: np.ndarray | None, ai_rgb: np.ndarray) -> dict[str, Any]:
+    check: dict[str, Any] = {
+        "detector": "opencv_haar",
+        "status": "unavailable",
+        "sourceFace": None,
+        "aiFace": None,
+        "centerDelta": None,
+        "sizeRatioDelta": None,
+    }
+    if source_rgb is None:
+        check.update({"detector": "unavailable", "reason": "source_image_unavailable"})
+        return check
+
+    source_count, source_detector, source_rectangles = _detect_face_count(source_rgb)
+    ai_count, ai_detector, ai_rectangles = _detect_face_count(ai_rgb)
+    detector = source_detector if source_detector == ai_detector else f"{source_detector}/{ai_detector}"
+    check.update({
+        "detector": detector,
+        "sourceFaceCount": source_count,
+        "aiFaceCount": ai_count,
+        "sourceRectangles": source_rectangles[:3],
+        "aiRectangles": ai_rectangles[:3],
+    })
+    if source_count is None or ai_count is None:
+        check.update({"status": "unavailable", "reason": "face_detector_unavailable"})
+        return check
+    if source_count != 1 or ai_count != 1:
+        check.update({"status": "unavailable", "reason": "single_face_not_confident"})
+        return check
+
+    geometry = compare_identity_geometry(
+        source_rectangle=source_rectangles[0],
+        source_shape=source_rgb.shape,
+        ai_rectangle=ai_rectangles[0],
+        ai_shape=ai_rgb.shape,
+    )
+    check.update(geometry)
+    return check
+
+
 def evaluate_ai_pro_quality(
     *,
     ai_image_path: Path | str | None,
+    source_image_path: Path | str | None = None,
     output_dir: Path | str,
     task_id: str,
     target_spec: dict[str, Any],
@@ -187,6 +306,15 @@ def evaluate_ai_pro_quality(
         warnings.append(_issue("AI_PRO_FACE_DETECTOR_UNAVAILABLE", "Face detector was unavailable for AI Pro output; this does not block fallback-safe delivery.", "warning", "face"))
     elif face_count != 1:
         warnings.append(_issue("AI_PRO_FACE_COUNT_REVIEW", "AI Pro output did not produce a confident single-face detector result; manual review is required.", "warning", "face.count"))
+
+    identity_check = _evaluate_identity_check(_read_rgb_image(source_image_path), image_rgb)
+    checks["identity"] = identity_check
+    if identity_check.get("status") == "failed":
+        errors.append(_issue("AI_PRO_IDENTITY_DRIFT_FAILED", "AI Pro may have changed face position or structure too much, so Free Core fallback is used.", "error", "identity"))
+    elif identity_check.get("status") == "warning":
+        warnings.append(_issue("AI_PRO_IDENTITY_DRIFT_WARNING", "AI Pro face geometry differs from Free Core and should be reviewed.", "warning", "identity"))
+    elif identity_check.get("status") == "unavailable":
+        warnings.append(_issue("AI_PRO_IDENTITY_CHECK_UNAVAILABLE", "Identity consistency check could not get confident single-face detections; this does not block fallback-safe delivery.", "warning", "identity"))
 
     checks["composition"] = {
         "targetDimensions": {"width": target_width, "height": target_height},
