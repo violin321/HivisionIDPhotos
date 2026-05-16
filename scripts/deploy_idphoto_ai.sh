@@ -15,6 +15,8 @@ HEALTH_INTERVAL_SECONDS="${HEALTH_INTERVAL_SECONDS:-2}"
 AI_PRO_PROVIDER="${AI_PRO_PROVIDER:-mock}"
 GPT_IMAGE_API_BASE="${GPT_IMAGE_API_BASE:-}"
 GPT_IMAGE_MODEL="${GPT_IMAGE_MODEL:-gpt-image-2}"
+GPT_IMAGE_SIZE="${GPT_IMAGE_SIZE:-auto}"
+GPT_IMAGE_SIZE_POLICY="${GPT_IMAGE_SIZE_POLICY:-auto}"
 AI_PRO_TIMEOUT_SECONDS="${AI_PRO_TIMEOUT_SECONDS:-45}"
 
 DO_RESTART=1
@@ -47,6 +49,8 @@ AI Pro runtime env (optional; missing key is warning-only because fallback remai
   AI_PRO_PROVIDER=metapi
   GPT_IMAGE_API_BASE=http://127.0.0.1:4000/v1
   GPT_IMAGE_MODEL=gpt-image-2
+  GPT_IMAGE_SIZE=auto
+  GPT_IMAGE_SIZE_POLICY=auto
   GPT_IMAGE_API_KEY=<set-in-runtime-only>
   AI_PRO_TIMEOUT_SECONDS=45
 
@@ -97,6 +101,8 @@ check_ai_pro_env() {
   log "AI_PRO_PROVIDER=${AI_PRO_PROVIDER:-mock}"
   log "GPT_IMAGE_API_BASE=$(configured_or_missing "$GPT_IMAGE_API_BASE")"
   log "GPT_IMAGE_MODEL=${GPT_IMAGE_MODEL:-gpt-image-2}"
+  log "GPT_IMAGE_SIZE=${GPT_IMAGE_SIZE:-auto}"
+  log "GPT_IMAGE_SIZE_POLICY=${GPT_IMAGE_SIZE_POLICY:-auto}"
   log "AI_PRO_TIMEOUT_SECONDS=${AI_PRO_TIMEOUT_SECONDS:-45}"
   if [[ -n "${GPT_IMAGE_API_KEY:-}" || -n "${OPENAI_API_KEY:-}" ]]; then
     log "GPT_IMAGE_API_KEY=configured"

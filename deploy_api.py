@@ -1282,6 +1282,7 @@ def build_ai_pro_results(task_id: str, result_dir: Path, ai_pro: dict[str, Any],
             final_prompt=final_prompt,
             template_id=template["id"],
             template_version=template["version"],
+            target_spec=spec_context["spec"],
         )
         metadata = _ai_pro_base_metadata(
             mode,
