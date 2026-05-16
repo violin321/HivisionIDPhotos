@@ -35,6 +35,18 @@ function formatBytes(value: number) {
   return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+const TERMINAL_TASK_STATUSES = new Set<ProcessingTask['status']>(['succeeded', 'failed', 'expired']);
+
+function getTaskPollingConfig(aiProEnabled: boolean) {
+  return aiProEnabled
+    ? { intervalMs: 1_500, maxPollMs: 180_000 }
+    : { intervalMs: 900, maxPollMs: 12_000 };
+}
+
+function wait(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function AdminStatusPanel({ stats, onRefresh }: { stats: AdminStats | null; onRefresh: () => void }) {
   const { t } = usePreferences();
   return (
@@ -355,14 +367,32 @@ export default function StudioShell({ username, onLogout }: { username?: string 
       setBusy(false);
 
       let polledTask = nextTask;
-      for (let tick = 1; tick <= 12; tick += 1) {
+      const pollingConfig = getTaskPollingConfig(Boolean(aiProRequest.enabled));
+      const pollStartedAt = Date.now();
+      let tick = 1;
+      while (!TERMINAL_TASK_STATUSES.has(polledTask.status) && Date.now() - pollStartedAt < pollingConfig.maxPollMs) {
+        await wait(pollingConfig.intervalMs);
         polledTask = await getTask(polledTask, tick);
         setTask(polledTask);
-        if (['succeeded', 'failed', 'expired'].includes(polledTask.status)) break;
-        await new Promise((resolve) => setTimeout(resolve, 900));
+        tick += 1;
       }
       if (polledTask.status === 'failed' || polledTask.status === 'expired') {
         setErrorMessage(polledTask.error?.message ?? `Task ${polledTask.status}.`);
+      } else if (!TERMINAL_TASK_STATUSES.has(polledTask.status)) {
+        setTask((current) => current && current.taskId === polledTask.taskId ? {
+          ...polledTask,
+          status: 'failed',
+          error: {
+            code: 'FRONTEND_POLL_TIMEOUT',
+            message: aiProRequest.enabled
+              ? 'AI Pro 生成仍在处理中，请稍后刷新任务状态/重试。'
+              : '证件照生成仍在处理中，请稍后刷新任务状态/重试。',
+            retryable: true,
+          },
+        } : current);
+        setErrorMessage(aiProRequest.enabled
+          ? 'AI Pro 生成仍在处理中，请稍后刷新任务状态/重试。'
+          : '证件照生成仍在处理中，请稍后刷新任务状态/重试。');
       }
       void refreshAdminStats();
     } catch (error) {
