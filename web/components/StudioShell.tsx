@@ -318,14 +318,21 @@ export default function StudioShell({ username, onLogout }: { username?: string 
 
   async function handleCreateTask() {
     if (!upload) return;
+    const normalizedAiPro = taskOptions.aiPro ?? { enabled: false, modes: [], promptParams: {}, consentAccepted: false };
+    if (normalizedAiPro.enabled && !normalizedAiPro.consentAccepted) {
+      setErrorMessage('请先勾选 AI Pro 同意授权/同意将图片用于 AI Pro 生成');
+      return;
+    }
     setBusy(true);
     setErrorMessage(null);
     try {
       const aiProRequest = {
-        ...(taskOptions.aiPro ?? { enabled: false, modes: [], promptParams: {}, consentAccepted: false }),
+        ...normalizedAiPro,
+        modes: normalizedAiPro.enabled ? [normalizedAiPro.modes[0] ?? 'ai_blue_formal_id_photo'] : [],
         promptParams: {
-          ...(taskOptions.aiPro?.promptParams ?? {}),
+          ...(normalizedAiPro.promptParams ?? {}),
           backgroundColor: taskOptions.customBackgroundEnabled ? 'custom' : selectedBackground,
+          outputSpec: template ? `${template.width ?? 'auto'}x${template.height ?? 'auto'}@${template.dpi ?? 300}dpi` : selectedTemplate,
         },
       };
       const nextTask = await createTask({

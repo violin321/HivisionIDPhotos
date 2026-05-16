@@ -49,10 +49,11 @@ const layoutPaperSizes = [
   { value: 'five-inch', label: '5 inch · 1051×1500' },
   { value: 'a4', label: 'A4 · 2479×3508' },
 ] as const;
-const aiProModes: Array<{ value: AiProMode; label: string; note: string }> = [
-  { value: 'ai_repair', label: 'AI 精修', note: 'fallback preview：轻量修复预览' },
-  { value: 'ai_blue_formal_id_photo', label: 'AI 蓝底证件照', note: '可走已配置 AI Pro provider；无凭证时 fallback' },
-  { value: 'executive_headshot', label: '高端影棚肖像', note: '非正式证件用途；当前 fallback preview' },
+const AI_PRO_ID_PHOTO_MODE: AiProMode = 'ai_blue_formal_id_photo';
+const aiProModes: Array<{ value: AiProMode; label: string; note: string; badge: string }> = [
+  { value: AI_PRO_ID_PHOTO_MODE, label: '证件照 AI 增强', note: '跟随当前规格与底色生成 AI Pro 候选；provider 可用时优先真实生成，否则 fallback。', badge: '证件照流程' },
+  { value: 'ai_repair', label: 'AI 精修', note: '仅做人像轻量修复预览，不改变证件照规格。', badge: '非规格入口' },
+  { value: 'executive_headshot', label: '高端影棚肖像', note: '非正式证件照用途；当前作为影棚肖像候选，避免按证件照规格误用。', badge: '非证件照' },
 ];
 const templateCategories = ['all', 'common', 'exam', 'visa', 'credential'] as const;
 type TemplateCategory = (typeof templateCategories)[number];
@@ -317,8 +318,8 @@ export function WorkflowControls({
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <p className="font-mono text-[10px] uppercase tracking-[0.26em] text-amber">AI PRO · PROVIDER/FALLBACK</p>
-            <h4 className="mt-1 font-semibold">上传时预选 AI Pro</h4>
-            <p className="mt-1 text-xs leading-5 text-slate">AI 蓝底证件照会在后端尝试已配置 provider；无凭证或失败时显示 no_credentials / fallback，不影响官方结果。当前不产生真实支付。</p>
+            <h4 className="mt-1 font-semibold">AI Pro 单选增强</h4>
+            <p className="mt-1 text-xs leading-5 text-slate">证件照 AI 增强会跟随当前规格与底色；影棚肖像明确为非证件照用途。provider 不可用时使用 fallback，当前不产生真实支付。</p>
           </div>
           <label className="flex cursor-pointer items-center gap-2 text-xs text-slate">
             <input
@@ -329,8 +330,8 @@ export function WorkflowControls({
                 onTaskOptionsChange({
                   aiPro: {
                     enabled,
-                    modes: enabled ? (taskOptions.aiPro?.modes?.length ? taskOptions.aiPro.modes : ['ai_blue_formal_id_photo']) : [],
-                    promptParams: taskOptions.aiPro?.promptParams ?? { outfit: '深色西装/白衬衫', backgroundColor: selectedBackground, style: 'natural', retouchLevel: 'medium' },
+                    modes: enabled ? [((taskOptions.aiPro?.modes?.[0] ?? AI_PRO_ID_PHOTO_MODE) as AiProMode)] : [],
+                    promptParams: { ...(taskOptions.aiPro?.promptParams ?? { outfit: '深色西装/白衬衫', style: 'natural', retouchLevel: 'medium' }), backgroundColor: selectedBackground },
                     consentAccepted: enabled ? Boolean(taskOptions.aiPro?.consentAccepted) : false,
                   },
                 });
@@ -344,27 +345,34 @@ export function WorkflowControls({
 
         {taskOptions.aiPro?.enabled ? (
           <div className="mt-4 space-y-4">
-            <div className="grid gap-2 md:grid-cols-3">
+            <fieldset className="grid gap-2 md:grid-cols-3">
+              <legend className="sr-only">AI Pro 模式单选</legend>
               {aiProModes.map((mode) => {
-                const active = taskOptions.aiPro?.modes?.includes(mode.value);
+                const active = (taskOptions.aiPro?.modes?.[0] ?? AI_PRO_ID_PHOTO_MODE) === mode.value;
                 return (
                   <label key={mode.value} className={`cursor-pointer rounded-2xl border p-3 text-sm transition ${active ? 'border-amber bg-amber/10' : 'border-ink/10 bg-porcelain/70'}`}>
                     <input
-                      type="checkbox"
+                      type="radio"
+                      name="ai-pro-mode"
                       checked={Boolean(active)}
-                      onChange={(event) => {
-                        const current = taskOptions.aiPro?.modes ?? [];
-                        const modes = event.target.checked ? [...new Set([...current, mode.value])] : current.filter((item) => item !== mode.value);
-                        onTaskOptionsChange({ aiPro: { ...taskOptions.aiPro!, modes } });
+                      onChange={() => {
+                        onTaskOptionsChange({
+                          aiPro: {
+                            ...taskOptions.aiPro!,
+                            modes: [mode.value],
+                            promptParams: { ...taskOptions.aiPro!.promptParams, backgroundColor: selectedBackground },
+                          },
+                        });
                       }}
                       className="mr-2 accent-amber"
                     />
                     <span className="font-semibold">{mode.label}</span>
+                    <span className="ml-2 rounded-full border border-ink/10 bg-paper/80 px-2 py-0.5 text-[10px] text-slate">{mode.badge}</span>
                     <span className="mt-1 block text-xs leading-5 text-slate">{mode.note}</span>
                   </label>
                 );
               })}
-            </div>
+            </fieldset>
             <div className="grid gap-3 md:grid-cols-3">
               <input type="text" value={(taskOptions.aiPro.promptParams.outfit as string | undefined) ?? ''} onChange={(event) => onTaskOptionsChange({ aiPro: { ...taskOptions.aiPro!, promptParams: { ...taskOptions.aiPro!.promptParams, outfit: event.target.value } } })} placeholder="服装：深色西装/白衬衫" className="rounded-2xl border border-ink/10 bg-porcelain px-3 py-3 text-sm" />
               <input type="text" value={(taskOptions.aiPro.promptParams.style as string | undefined) ?? ''} onChange={(event) => onTaskOptionsChange({ aiPro: { ...taskOptions.aiPro!, promptParams: { ...taskOptions.aiPro!.promptParams, style: event.target.value } } })} placeholder="风格：natural / studio" className="rounded-2xl border border-ink/10 bg-porcelain px-3 py-3 text-sm" />

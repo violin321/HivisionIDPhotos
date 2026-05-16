@@ -1145,8 +1145,10 @@ def make_ai_preview_from_official(official_image: np.ndarray, output_path: Path,
 
 def normalize_ai_pro_request(ai_pro: Any) -> dict[str, Any]:
     requested_modes = [str(mode) for mode in (ai_pro.modes or []) if str(mode) in AI_PRO_SUPPORTED_MODES]
-    if ai_pro.enabled and not requested_modes:
-        requested_modes = ["ai_repair"]
+    if ai_pro.enabled:
+        requested_modes = [requested_modes[0] if requested_modes else "ai_blue_formal_id_photo"]
+    else:
+        requested_modes = []
     return {
         "enabled": bool(ai_pro.enabled),
         "modes": requested_modes,
@@ -1691,7 +1693,7 @@ async def api_create_task(request: Request, payload: TaskCreateRequest, backgrou
         task_options = dict(payload.options)
         ai_pro = normalize_ai_pro_request(payload.aiPro)
         if ai_pro["enabled"] and not ai_pro["consentAccepted"]:
-            raise HTTPException(status_code=400, detail=error_detail("AI_PRO_CONSENT_REQUIRED", "AI Pro requires explicit consent before mock generation.", retryable=False))
+            raise HTTPException(status_code=400, detail=error_detail("AI_PRO_CONSENT_REQUIRED", "请先勾选 AI Pro 同意授权/同意将图片用于 AI Pro 生成。", retryable=False))
         background, background_rgb = resolve_background_rgb(task_options)
         normalize_render_mode(task_options.get("renderMode"))
         plugin_flags = normalize_plugin_flags(task_options)

@@ -82,6 +82,15 @@ export interface ApiErrorBody {
     retryable: boolean;
     traceId?: string;
   };
+  detail?: string | {
+    error?: {
+      code?: string;
+      message?: string;
+      retryable?: boolean;
+      traceId?: string;
+    };
+    message?: string;
+  };
 }
 
 export interface TaskOptions {
@@ -248,8 +257,12 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
     let apiMessage = `API ${init?.method ?? 'GET'} ${path} failed: ${response.status}`;
     try {
       const body = (await response.json()) as ApiErrorBody;
-      if (body.error?.message) {
-        apiMessage = `${body.error.code}: ${body.error.message}`;
+      const error = body.error ?? (typeof body.detail === 'object' ? body.detail.error : undefined);
+      const detailMessage = typeof body.detail === 'string' ? body.detail : typeof body.detail === 'object' ? body.detail.message : undefined;
+      if (error?.message) {
+        apiMessage = `${error.code ?? response.status}: ${error.message}`;
+      } else if (detailMessage) {
+        apiMessage = detailMessage;
       }
     } catch {
       // Keep the HTTP fallback message when the error body is not JSON.
