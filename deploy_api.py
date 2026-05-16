@@ -29,6 +29,7 @@ from hivision.creator.choose_handler import choose_handler
 from hivision.plugin.ai_enhance import AIEnhanceRequest, AIEnhanceService
 from hivision.plugin.ai_enhance.errors import AIEnhanceValidationError
 from hivision.plugin.ai_pro import AIProEngine
+from hivision.plugin.ai_pro.quality import evaluate_ai_pro_quality
 from hivision.plugin.ai_pro.prompts import (
     DEFAULT_PROMPT_VERSION as AI_PRO_DEFAULT_PROMPT_VERSION,
     SUPPORTED_MODES as AI_PRO_SUPPORTED_MODES,
@@ -1228,9 +1229,15 @@ def build_ai_pro_mock_results(task_id: str, free_result: dict[str, Any] | None, 
             prompt_metadata=built_prompt.metadata,
         )
         metadata["mockSource"] = "freeResult"
+        result_status = str(status_info.get("resultStatus") or status_info.get("status") or "mock_completed")
+        is_quality_fallback = result_status in {"quality_failed", "fallback"} or bool(metadata.get("fallbackToFree"))
+        metadata.setdefault("qualityGateStatus", "fallback" if is_quality_fallback else "not_run")
+        metadata.setdefault("fallbackToFree", is_quality_fallback)
+        metadata.setdefault("resultTier", "pro")
+        metadata.setdefault("isPaidFeature", True)
         results.append({
             "mode": mode,
-            "status": str(status_info.get("resultStatus") or status_info.get("status") or "mock_completed"),
+            "status": result_status,
             "imageUrl": preview_url,
             "previewUrl": preview_url,
             "downloadUrl": (free_result or {}).get("downloadUrl"),
@@ -1238,6 +1245,10 @@ def build_ai_pro_mock_results(task_id: str, free_result: dict[str, Any] | None, 
             "promptTemplateId": template["id"],
             "templateVersion": template["version"],
             "paid": False,
+            "resultTier": "pro",
+            "isPaidFeature": True,
+            "fallbackToFree": is_quality_fallback,
+            "qualityGate": {"status": metadata.get("qualityGateStatus"), "passed": False if is_quality_fallback else None, "fallbackReason": metadata.get("fallbackReason") or metadata.get("errorCode")},
             "qualityReport": {"source": "core_quality_report", "corePassed": bool((quality_report or {}).get("passed")), "mock": True},
             "promptMetadata": metadata,
             "mock": True,
@@ -1284,30 +1295,68 @@ def build_ai_pro_results(task_id: str, result_dir: Path, ai_pro: dict[str, Any],
             prompt_metadata=built_prompt.metadata,
         )
         if engine_result.status == "completed" and engine_result.image_path:
-            result_file = build_result_file(task_id, "ai_pro_blue", engine_result.image_path.name)
-            results.append({
-                "mode": mode,
-                "status": "completed",
-                "imageUrl": result_file["previewUrl"],
-                "previewUrl": result_file["previewUrl"],
-                "downloadUrl": result_file["downloadUrl"],
-                "usageLabel": template["usageLabel"],
-                "promptTemplateId": template["id"],
-                "templateVersion": template["version"],
-                "paid": False,
-                "qualityReport": {"source": "ai_provider", "corePassed": bool((quality_report or {}).get("passed")), "mock": False},
-                "promptMetadata": metadata,
-                "mock": False,
+            ai_quality_report = evaluate_ai_pro_quality(
+                ai_image_path=engine_result.image_path,
+                output_dir=result_dir,
+                task_id=task_id,
+                target_spec=spec_context["spec"],
+                background_rgb=spec_context["backgroundRgb"],
+                free_result=free_result,
+                core_quality_report=quality_report,
+            )
+            quality_gate_status = "passed" if ai_quality_report.get("passed") else "quality_failed"
+            metadata.update({
+                "qualityGateStatus": quality_gate_status,
+                "fallbackToFree": not bool(ai_quality_report.get("passed")),
+                "fallbackReason": ai_quality_report.get("fallbackReason") or metadata.get("fallbackReason"),
+                "resultTier": "pro",
+                "isPaidFeature": True,
             })
-            stage_modes[mode] = "completed"
+            if ai_quality_report.get("passed") and ai_quality_report.get("usableImagePath"):
+                usable_image_path = Path(str(ai_quality_report["usableImagePath"]))
+                result_file = build_result_file(task_id, "ai_pro_blue", usable_image_path.name)
+                results.append({
+                    "mode": mode,
+                    "status": "completed",
+                    "imageUrl": result_file["previewUrl"],
+                    "previewUrl": result_file["previewUrl"],
+                    "downloadUrl": result_file["downloadUrl"],
+                    "usageLabel": template["usageLabel"],
+                    "promptTemplateId": template["id"],
+                    "templateVersion": template["version"],
+                    "paid": False,
+                    "resultTier": "pro",
+                    "isPaidFeature": True,
+                    "fallbackToFree": False,
+                    "qualityGate": {"status": "passed", "passed": True},
+                    "aiQualityReport": ai_quality_report,
+                    "qualityReport": {"source": "ai_provider_quality_gate", "corePassed": bool((quality_report or {}).get("passed")), "mock": False, "passed": True},
+                    "promptMetadata": metadata,
+                    "mock": False,
+                })
+                stage_modes[mode] = "completed"
+            else:
+                fallback = build_ai_pro_mock_results(task_id, free_result, {**ai_pro, "modes": [mode]}, quality_report, template_id=template_id, options=task_options, mode_status={mode: {"status": "quality_failed", "resultStatus": "quality_failed", "errorCode": ai_quality_report.get("fallbackReason"), "metadata": metadata}})[0]
+                fallback.update({
+                    "status": "quality_failed",
+                    "resultTier": "pro",
+                    "isPaidFeature": True,
+                    "fallbackToFree": True,
+                    "qualityGate": {"status": "quality_failed", "passed": False, "fallbackReason": ai_quality_report.get("fallbackReason")},
+                    "aiQualityReport": ai_quality_report,
+                })
+                fallback.setdefault("promptMetadata", {}).update(metadata)
+                fallback["promptMetadata"].update({"providerStatus": "quality_failed", "qualityGateStatus": "quality_failed", "fallbackToFree": True})
+                results.append(fallback)
+                stage_modes[mode] = "quality_failed"
         else:
             fallback = build_ai_pro_mock_results(task_id, free_result, {**ai_pro, "modes": [mode]}, quality_report, template_id=template_id, options=task_options, mode_status={mode: {"status": engine_result.status, "resultStatus": engine_result.status, "errorCode": engine_result.metadata.get("errorCode"), "metadata": metadata}})[0]
             results.append(fallback)
             stage_modes[mode] = engine_result.status
     if all(status == "completed" for status in stage_modes.values()):
         stage_status = "completed"
-    elif any(status in {"no_credentials", "fallback"} for status in stage_modes.values()):
-        stage_status = "fallback"
+    elif any(status in {"quality_failed", "no_credentials", "fallback"} for status in stage_modes.values()):
+        stage_status = "quality_failed" if any(status == "quality_failed" for status in stage_modes.values()) else "fallback"
     else:
         stage_status = "mock_completed"
     return results, {"status": stage_status, "modes": ai_pro.get("modes", []), "modeStatuses": stage_modes, "paid": False}

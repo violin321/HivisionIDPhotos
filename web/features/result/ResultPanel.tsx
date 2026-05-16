@@ -1,4 +1,4 @@
-import type { BackgroundColor, IdPhotoTemplate, ProcessingTask } from '../../lib/api-client';
+import type { AiProResult, BackgroundColor, IdPhotoTemplate, ProcessingTask } from '../../lib/api-client';
 import { usePreferences } from '../../lib/preferences';
 
 const backgroundClass: Record<BackgroundColor, string> = {
@@ -14,7 +14,6 @@ const backgroundLabelKeys: Record<BackgroundColor, 'bgWhite' | 'bgBlue' | 'bgRed
   red: 'bgRed',
   gray: 'bgGray',
 };
-
 
 function formatMetricValue(value: unknown): string {
   if (value === null || value === undefined) return '—';
@@ -57,7 +56,7 @@ function GenerationProgress({ kind }: { kind: GenerationKind }) {
           <span className={`h-4 w-4 animate-spin rounded-full border-2 border-transparent ${isAiPro ? 'border-t-amber border-r-amber' : 'border-t-measurement border-r-measurement'}`} aria-hidden="true" />
           <div>
             <p className="font-semibold text-ink">{isAiPro ? 'AI Pro 生成中' : '证件照生成中…'}</p>
-            <p className="mt-0.5 text-xs text-slate">{isAiPro ? '预计 30–120 秒，请勿关闭页面；完成后自动展示 AI Pro 候选结果。' : '正在处理 IDCreator 官方结果。'}</p>
+            <p className="mt-0.5 text-xs text-slate">{isAiPro ? '预计 30–120 秒；完成后先经过质量门，不合格会回退 Free Core。' : '正在处理 IDCreator 官方结果。'}</p>
           </div>
         </div>
         <span className={`rounded-full border px-3 py-1 font-mono text-[10px] uppercase tracking-[0.18em] ${isAiPro ? 'border-amber/35 text-amber' : 'border-measurement/35 text-measurement'}`}>{isAiPro ? 'AI PRO' : 'IDCREATOR'}</span>
@@ -69,28 +68,21 @@ function GenerationProgress({ kind }: { kind: GenerationKind }) {
   );
 }
 
+function resultTitle(item: AiProResult) {
+  if (item.mode === 'ai_repair') return 'AI 精修';
+  if (item.mode === 'ai_blue_formal_id_photo') return '证件照 AI 增强';
+  return '高端影棚肖像';
+}
+
 export function ResultPanel({ task, template, selectedBackground, generationKind = 'idle' }: ResultPanelProps) {
   const { t } = usePreferences();
   const proResults = task?.proResults ?? [];
-  const primaryProResult = task?.aiPro?.enabled ? proResults.find((item) => item.previewUrl || item.imageUrl || item.downloadUrl) : undefined;
-  const primaryResult = primaryProResult
-    ? {
-        previewUrl: primaryProResult.previewUrl ?? primaryProResult.imageUrl ?? undefined,
-        downloadUrl: primaryProResult.downloadUrl ?? primaryProResult.previewUrl ?? primaryProResult.imageUrl ?? undefined,
-        source: String(primaryProResult.promptMetadata?.provider ?? 'AI Pro'),
-        status: String(primaryProResult.promptMetadata?.providerStatus ?? primaryProResult.status),
-      }
-    : {
-        previewUrl: task?.officialResult?.previewUrl,
-        downloadUrl: task?.officialResult?.downloadUrl,
-        source: 'IDCreator',
-        status: undefined,
-      };
-  const succeeded = task?.status === 'succeeded' && Boolean(primaryResult.previewUrl || primaryResult.downloadUrl);
-  const officialPreviewUrl = primaryResult.previewUrl;
+  const shouldShowProSection = Boolean(task?.aiPro?.enabled || proResults.length > 0);
+  const freePreviewUrl = task?.officialResult?.previewUrl ?? task?.freeResult?.previewUrl;
+  const freeDownloadUrl = task?.officialResult?.downloadUrl ?? task?.freeResult?.downloadUrl;
+  const freeSucceeded = task?.status === 'succeeded' && Boolean(freePreviewUrl || freeDownloadUrl);
   const aiPreviewUrl = task?.aiEnhanceResult?.previewUrl;
   const aiKind = task?.options.aiEnhancePreviewKind ?? 'none';
-  const primaryResultLabel = primaryProResult ? 'AI Pro 结果' : 'IDCreator';
   const pluginResults = [
     task?.layoutResult ? { key: 'layout', title: t('layoutResult'), copy: t('layoutResultCopy'), result: task.layoutResult } : null,
     task?.compressedResult ? { key: 'compressed', title: t('compressedResult'), copy: t('compressedResultCopy', { kb: String(task.compressedTargetKb ?? task.options.imageKb ?? '—') }), result: task.compressedResult } : null,
@@ -101,11 +93,11 @@ export function ResultPanel({ task, template, selectedBackground, generationKind
     <section className="rounded-[28px] border border-ink/10 bg-porcelain/80 p-6">
       <div className="flex items-center justify-between gap-4">
         <div>
-          <p className="font-mono text-[11px] uppercase tracking-[0.28em] text-slate">{primaryProResult ? 'AI PRO PRIMARY' : t('officialResult')}</p>
-          <h2 className="mt-2 text-2xl font-semibold tracking-[-0.03em]">{primaryProResult ? 'AI Pro 主结果卡' : t('outputCard')}</h2>
+          <p className="font-mono text-[11px] uppercase tracking-[0.28em] text-slate">FREE CORE / IDCREATOR</p>
+          <h2 className="mt-2 text-2xl font-semibold tracking-[-0.03em]">Free Core 标准证照</h2>
         </div>
-        <span className="rounded-full border border-amber/40 bg-amber/10 px-3 py-1 font-mono text-[10px] uppercase tracking-[0.22em] text-amber">
-          {succeeded ? t('ready') : t('waiting')}
+        <span className="rounded-full border border-measurement/40 bg-measurement/10 px-3 py-1 font-mono text-[10px] uppercase tracking-[0.22em] text-measurement">
+          {freeSucceeded ? t('ready') : t('waiting')}
         </span>
       </div>
 
@@ -114,16 +106,16 @@ export function ResultPanel({ task, template, selectedBackground, generationKind
       <div className="mt-6 grid gap-5 lg:grid-cols-[190px_1fr]">
         <div className="relative mx-auto aspect-[3/4] w-full max-w-[210px] rounded-[22px] border border-ink/15 bg-[#ece6da] p-3 shadow-panel">
           <div className={`relative h-full rounded-[16px] border border-ink/10 bg-gradient-to-b ${backgroundClass[selectedBackground]}`}>
-            {officialPreviewUrl ? (
+            {freePreviewUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={officialPreviewUrl} alt={t('officialAlt')} className="absolute inset-0 h-full w-full rounded-[16px] object-contain object-center" />
+              <img src={freePreviewUrl} alt={t('officialAlt')} className="absolute inset-0 h-full w-full rounded-[16px] object-contain object-center" />
             ) : (
               <div className="absolute inset-x-[18%] bottom-0 flex h-[76%] flex-col items-center justify-end overflow-hidden rounded-[16px]">
                 <div className="mb-[-6px] h-14 w-14 rounded-full border border-ink/10 bg-[#c9bca9]" />
                 <div className="h-24 w-28 rounded-t-[48px] bg-[#2f3a40]" />
               </div>
             )}
-            {!officialPreviewUrl ? (
+            {!freePreviewUrl ? (
               <>
                 <div className="pointer-events-none absolute inset-x-3 top-[24%] border-t border-measurement/30" />
                 <div className="pointer-events-none absolute inset-x-3 top-[38%] border-t border-measurement/20" />
@@ -135,18 +127,18 @@ export function ResultPanel({ task, template, selectedBackground, generationKind
 
         <div className="flex flex-col justify-between">
           <div>
-            <p className="text-sm leading-6 text-slate">{primaryProResult ? '已开启 AI Pro：主结果卡优先展示 AI 生成候选；官方 IDCreator 结果仍保留在任务数据中，可用于人工核验。' : t('resultIntro')}</p>
+            <p className="text-sm leading-6 text-slate">Free Core 使用 IDCreator/Hivision 标准证照主链路，本地确定性处理，是正式、稳定、免费的官方结果；AI Pro 失败不会影响此结果。</p>
             <dl className="mt-5 grid gap-3 text-sm sm:grid-cols-2">
               <div className="rounded-2xl border border-ink/10 bg-paper/60 p-3"><dt className="text-slate">{t('spec')}</dt><dd className="mt-1 font-semibold">{template?.label ?? '—'} · {template?.size ?? '—'}</dd></div>
               <div className="rounded-2xl border border-ink/10 bg-paper/60 p-3"><dt className="text-slate">{t('background')}</dt><dd className="mt-1 font-semibold">{t(backgroundLabelKeys[selectedBackground])}</dd></div>
-              <div className="rounded-2xl border border-ink/10 bg-paper/60 p-3"><dt className="text-slate">{t('resultSource')}</dt><dd className="mt-1 font-semibold">{succeeded ? primaryResultLabel : '—'}</dd></div>
-              <div className="rounded-2xl border border-ink/10 bg-paper/60 p-3"><dt className="text-slate">{primaryProResult ? 'AI provider' : t('aiPreview')}</dt><dd className="mt-1 font-semibold">{primaryProResult ? `${primaryResult.source} · ${primaryResult.status ?? 'ready'}` : aiKind === 'none' ? t('disabled') : aiKind}</dd></div>
+              <div className="rounded-2xl border border-ink/10 bg-paper/60 p-3"><dt className="text-slate">{t('resultSource')}</dt><dd className="mt-1 font-semibold">{freeSucceeded ? 'IDCreator / Free Core' : '—'}</dd></div>
+              <div className="rounded-2xl border border-ink/10 bg-paper/60 p-3"><dt className="text-slate">{t('aiPreview')}</dt><dd className="mt-1 font-semibold">{aiKind === 'none' ? t('disabled') : aiKind}</dd></div>
             </dl>
           </div>
 
           <div className="mt-5 flex flex-wrap gap-3">
-            <a aria-disabled={!succeeded} href={primaryResult.previewUrl ?? '#'} className={`rounded-2xl px-4 py-3 text-sm font-semibold ${succeeded && primaryResult.previewUrl ? 'bg-ink text-porcelain' : 'pointer-events-none bg-line text-slate'}`}>{primaryProResult ? '打开 AI Pro 预览' : t('signedPreview')}</a>
-            <a aria-disabled={!succeeded} href={primaryResult.downloadUrl ?? '#'} className={`rounded-2xl border px-4 py-3 text-sm font-semibold ${succeeded && primaryResult.downloadUrl ? 'border-ink/15 text-ink' : 'pointer-events-none border-line text-slate'}`}>{primaryProResult ? '下载 AI Pro 结果' : t('signedDownload')}</a>
+            <a aria-disabled={!freeSucceeded} href={freePreviewUrl ?? '#'} className={`rounded-2xl px-4 py-3 text-sm font-semibold ${freeSucceeded && freePreviewUrl ? 'bg-ink text-porcelain' : 'pointer-events-none bg-line text-slate'}`}>打开 Free Core 预览</a>
+            <a aria-disabled={!freeSucceeded} href={freeDownloadUrl ?? '#'} className={`rounded-2xl border px-4 py-3 text-sm font-semibold ${freeSucceeded && freeDownloadUrl ? 'border-ink/15 text-ink' : 'pointer-events-none border-line text-slate'}`}>下载 Free Core 标准证照</a>
           </div>
         </div>
       </div>
@@ -207,53 +199,65 @@ export function ResultPanel({ task, template, selectedBackground, generationKind
         </div>
       ) : null}
 
-
-      {proResults.length > 0 ? (
+      {shouldShowProSection ? (
         <div className="mt-5 rounded-[20px] border border-amber/30 bg-amber/10 p-4 text-sm leading-6 text-graphite">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <p className="font-semibold text-ink">AI Pro 结果区</p>
-              <p className="text-xs text-slate">AI Pro 与官方 IDCreator 结果分离展示；AI 结果仅作候选，需按提交平台要求人工核验。</p>
+              <p className="font-semibold text-ink">AI Pro 增值结果</p>
+              <p className="text-xs text-slate">AI Pro 是可选增值支路，用于保守增强、换装、模板或形象照；不替代 Free Core 标准证照。</p>
             </div>
             <span className="rounded-full border border-amber/40 bg-paper/70 px-3 py-1 font-mono text-[10px] text-amber">{String((task?.stages?.aiPro as { status?: string } | undefined)?.status ?? 'queued')}</span>
           </div>
-          <div className="mt-3 grid gap-3 md:grid-cols-3">
-            {proResults.map((item) => {
-              const title = item.mode === 'ai_repair' ? 'AI 精修' : item.mode === 'ai_blue_formal_id_photo' ? '证件照 AI 增强' : '高端影棚肖像';
-              const providerStatus = String(item.promptMetadata?.providerStatus ?? item.status);
-              const fallback = item.promptMetadata?.fallback !== false;
-              const isRealProviderResult = item.mock === false && !fallback && providerStatus === 'configured';
-              const isMock = !isRealProviderResult;
-              const warning = providerStatus === 'no_credentials'
-                ? 'AI provider 未配置：当前展示 no_credentials fallback，不影响官方结果'
-                : isRealProviderResult
-                  ? '真实 AI Pro provider 生成候选，需按提交平台要求核验'
-                  : '当前为 fallback preview，不代表最终付费生成质量';
-              return (
-                <div key={`${item.mode}-${item.promptTemplateId}`} className={`rounded-[18px] border p-3 ${isMock ? 'border-amber/25 bg-paper/70' : 'border-measurement/30 bg-measurement/10'}`}>
-                  <div className="flex items-start justify-between gap-2">
-                    <p className="font-semibold text-ink">{title}</p>
-                    <span className={`rounded-full border px-2 py-0.5 font-mono text-[10px] ${isMock ? 'border-amber/35 text-amber' : 'border-measurement/35 text-measurement'}`}>{isRealProviderResult ? 'real_provider' : providerStatus}</span>
+          {proResults.length === 0 ? (
+            <p className="mt-3 rounded-2xl border border-amber/20 bg-paper/65 p-3 text-xs text-slate">AI Pro 已开启，结果生成后会在这里单独展示；Free Core 下载始终保留在上方。</p>
+          ) : (
+            <div className="mt-3 grid gap-3 md:grid-cols-3">
+              {proResults.map((item) => {
+                const providerStatus = String(item.promptMetadata?.providerStatus ?? item.status);
+                const qualityGateStatus = String(item.promptMetadata?.qualityGateStatus ?? item.qualityGate?.status ?? 'not_run');
+                const promptHash = String(item.promptMetadata?.promptHash ?? item.promptMetadata?.finalPromptHash ?? '—');
+                const fallbackToFree = item.fallbackToFree === true || item.promptMetadata?.fallbackToFree === true || qualityGateStatus === 'quality_failed';
+                const isPassed = qualityGateStatus === 'passed';
+                const badge = fallbackToFree ? 'fallback_to_free' : isPassed ? 'quality_passed' : providerStatus;
+                const warning = fallbackToFree
+                  ? 'AI Pro 结果未通过质量门，已回退到 Free Core 结果；这不代表 AI 成功替换官方结果。'
+                  : isPassed
+                    ? 'AI Pro 候选通过质量门，但仍需按提交平台要求人工核验。'
+                    : providerStatus === 'no_credentials'
+                      ? 'AI provider 未配置：当前展示 Free Core fallback，不影响官方结果。'
+                      : 'AI Pro 候选结果需人工核验。';
+                return (
+                  <div key={`${item.mode}-${item.promptTemplateId}`} className={`rounded-[18px] border p-3 ${fallbackToFree ? 'border-amber/35 bg-paper/70' : 'border-measurement/30 bg-measurement/10'}`}>
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="font-semibold text-ink">{resultTitle(item)}</p>
+                      <span className={`rounded-full border px-2 py-0.5 font-mono text-[10px] ${fallbackToFree ? 'border-amber/35 text-amber' : 'border-measurement/35 text-measurement'}`}>{badge}</span>
+                    </div>
+                    <p className="mt-1 text-xs text-slate">{warning}</p>
+                    <dl className="mt-2 space-y-1 text-xs text-slate">
+                      <div><dt className="inline">provider</dt><dd className="ml-2 inline font-mono text-ink">{String(item.promptMetadata?.provider ?? 'mock')}</dd></div>
+                      <div><dt className="inline">providerStatus</dt><dd className="ml-2 inline font-mono text-ink">{providerStatus}</dd></div>
+                      <div><dt className="inline">qualityGate</dt><dd className="ml-2 inline font-mono text-ink">{qualityGateStatus}</dd></div>
+                      <div><dt className="inline">template</dt><dd className="ml-2 inline font-mono text-ink">{item.promptTemplateId}@{item.templateVersion}</dd></div>
+                      <div><dt className="inline">promptHash</dt><dd className="ml-2 inline font-mono text-ink">{promptHash}</dd></div>
+                      <div><dt className="inline">result</dt><dd className="ml-2 inline font-mono text-ink">{fallbackToFree ? 'Free Core fallback' : 'AI Pro candidate'}</dd></div>
+                      <div><dt className="inline">paid</dt><dd className="ml-2 inline font-mono text-ink">{item.paid || item.isPaidFeature ? 'Pro / 增值' : 'placeholder'}</dd></div>
+                    </dl>
+                    {item.aiQualityReport ? (
+                      <div className="mt-2 rounded-xl border border-ink/10 bg-paper/60 px-3 py-2 text-xs">
+                        <span className="font-semibold text-ink">AI quality score</span>
+                        <span className="ml-2 font-mono text-ink">{item.aiQualityReport.score}/100</span>
+                        {item.aiQualityReport.fallbackReason ? <span className="ml-2 text-amber">{item.aiQualityReport.fallbackReason}</span> : null}
+                      </div>
+                    ) : null}
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {item.previewUrl ? <a href={item.previewUrl} className="inline-block rounded-xl bg-ink px-3 py-2 text-xs font-semibold text-porcelain">{fallbackToFree ? '打开 Free fallback 预览' : '打开 AI Pro 预览'}</a> : null}
+                      {item.downloadUrl ? <a href={item.downloadUrl} className="inline-block rounded-xl border border-ink/15 px-3 py-2 text-xs font-semibold text-ink">{fallbackToFree ? '下载 Free fallback' : '下载 AI Pro 结果'}</a> : null}
+                    </div>
                   </div>
-                  <p className="mt-1 text-xs text-slate">{warning}</p>
-                  <dl className="mt-2 space-y-1 text-xs text-slate">
-                    <div><dt className="inline">status</dt><dd className="ml-2 inline font-mono text-ink">{item.status}</dd></div>
-                    <div><dt className="inline">usage</dt><dd className="ml-2 inline font-mono text-ink">{item.usageLabel}</dd></div>
-                    <div><dt className="inline">template</dt><dd className="ml-2 inline font-mono text-ink">{item.promptTemplateId}@{item.templateVersion}</dd></div>
-                    <div><dt className="inline">provider</dt><dd className="ml-2 inline font-mono text-ink">{String(item.promptMetadata?.provider ?? 'mock')}</dd></div>
-                    <div><dt className="inline">providerStatus</dt><dd className="ml-2 inline font-mono text-ink">{providerStatus}</dd></div>
-                    <div><dt className="inline">result</dt><dd className="ml-2 inline font-mono text-ink">{isRealProviderResult ? 'real result' : 'fallback'}</dd></div>
-                    <div><dt className="inline">input</dt><dd className="ml-2 inline font-mono text-ink">{String(item.promptMetadata?.inputSource ?? 'freeResult')}</dd></div>
-                    <div><dt className="inline">paid</dt><dd className="ml-2 inline font-mono text-ink">{item.paid ? 'yes' : 'no'}</dd></div>
-                  </dl>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {item.previewUrl ? <a href={item.previewUrl} className="inline-block rounded-xl bg-ink px-3 py-2 text-xs font-semibold text-porcelain">打开预览</a> : null}
-                    {item.downloadUrl ? <a href={item.downloadUrl} className="inline-block rounded-xl border border-ink/15 px-3 py-2 text-xs font-semibold text-ink">下载</a> : null}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       ) : null}
 
