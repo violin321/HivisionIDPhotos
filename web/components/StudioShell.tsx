@@ -321,23 +321,25 @@ export default function StudioShell({ username, onLogout }: { username?: string 
     setBusy(true);
     setErrorMessage(null);
     try {
+      const aiProRequest = {
+        ...(taskOptions.aiPro ?? { enabled: false, modes: [], promptParams: {}, consentAccepted: false }),
+        promptParams: {
+          ...(taskOptions.aiPro?.promptParams ?? {}),
+          backgroundColor: taskOptions.customBackgroundEnabled ? 'custom' : selectedBackground,
+        },
+      };
       const nextTask = await createTask({
         uploadId: upload.uploadId,
         templateId: selectedTemplate,
         platform: 'web',
         aiMode: aiPreview ? 'preview' : 'none',
+        aiPro: aiProRequest,
         options: {
           ...taskOptions,
           background: taskOptions.customBackgroundEnabled ? 'custom' : selectedBackground,
           renderOfficialIdPhoto: true,
           renderAiEnhancePreview: aiPreview,
-          aiPro: {
-            ...(taskOptions.aiPro ?? { enabled: false, modes: [], promptParams: {}, consentAccepted: false }),
-            promptParams: {
-              ...(taskOptions.aiPro?.promptParams ?? {}),
-              backgroundColor: taskOptions.customBackgroundEnabled ? 'custom' : selectedBackground,
-            },
-          },
+          aiPro: aiProRequest,
         },
       });
       setTask(nextTask);
