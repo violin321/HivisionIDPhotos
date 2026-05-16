@@ -35,6 +35,18 @@ function formatBytes(value: number) {
   return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+const TERMINAL_TASK_STATUSES = new Set<ProcessingTask['status']>(['succeeded', 'failed', 'expired']);
+
+function getTaskPollingConfig(aiProEnabled: boolean) {
+  return aiProEnabled
+    ? { intervalMs: 1_500, maxPollMs: 180_000 }
+    : { intervalMs: 900, maxPollMs: 12_000 };
+}
+
+function wait(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function AdminStatusPanel({ stats, onRefresh }: { stats: AdminStats | null; onRefresh: () => void }) {
   const { t } = usePreferences();
   return (
@@ -261,6 +273,8 @@ export default function StudioShell({ username, onLogout }: { username?: string 
   });
 
   const template = useMemo(() => templateOptions.find((item) => item.templateId === selectedTemplate), [selectedTemplate, templateOptions]);
+  const taskIsProcessing = task?.status === 'queued' || task?.status === 'processing';
+  const currentGenerationKind = taskIsProcessing && task.options.aiPro?.enabled ? 'ai-pro' : taskIsProcessing ? 'idcreator' : 'idle';
   async function refreshAdminStats() {
     try {
       setAdminStats(await getAdminStats());
@@ -318,14 +332,21 @@ export default function StudioShell({ username, onLogout }: { username?: string 
 
   async function handleCreateTask() {
     if (!upload) return;
+    const normalizedAiPro = taskOptions.aiPro ?? { enabled: false, modes: [], promptParams: {}, consentAccepted: false };
+    if (normalizedAiPro.enabled && !normalizedAiPro.consentAccepted) {
+      setErrorMessage('请先勾选 AI Pro 同意授权/同意将图片用于 AI Pro 生成');
+      return;
+    }
     setBusy(true);
     setErrorMessage(null);
     try {
       const aiProRequest = {
-        ...(taskOptions.aiPro ?? { enabled: false, modes: [], promptParams: {}, consentAccepted: false }),
+        ...normalizedAiPro,
+        modes: normalizedAiPro.enabled ? [normalizedAiPro.modes[0] ?? 'ai_blue_formal_id_photo'] : [],
         promptParams: {
-          ...(taskOptions.aiPro?.promptParams ?? {}),
+          ...(normalizedAiPro.promptParams ?? {}),
           backgroundColor: taskOptions.customBackgroundEnabled ? 'custom' : selectedBackground,
+          outputSpec: template ? `${template.width ?? 'auto'}x${template.height ?? 'auto'}@${template.dpi ?? 300}dpi` : selectedTemplate,
         },
       };
       const nextTask = await createTask({
@@ -346,14 +367,32 @@ export default function StudioShell({ username, onLogout }: { username?: string 
       setBusy(false);
 
       let polledTask = nextTask;
-      for (let tick = 1; tick <= 12; tick += 1) {
+      const pollingConfig = getTaskPollingConfig(Boolean(aiProRequest.enabled));
+      const pollStartedAt = Date.now();
+      let tick = 1;
+      while (!TERMINAL_TASK_STATUSES.has(polledTask.status) && Date.now() - pollStartedAt < pollingConfig.maxPollMs) {
+        await wait(pollingConfig.intervalMs);
         polledTask = await getTask(polledTask, tick);
         setTask(polledTask);
-        if (['succeeded', 'failed', 'expired'].includes(polledTask.status)) break;
-        await new Promise((resolve) => setTimeout(resolve, 900));
+        tick += 1;
       }
       if (polledTask.status === 'failed' || polledTask.status === 'expired') {
         setErrorMessage(polledTask.error?.message ?? `Task ${polledTask.status}.`);
+      } else if (!TERMINAL_TASK_STATUSES.has(polledTask.status)) {
+        setTask((current) => current && current.taskId === polledTask.taskId ? {
+          ...polledTask,
+          status: 'failed',
+          error: {
+            code: 'FRONTEND_POLL_TIMEOUT',
+            message: aiProRequest.enabled
+              ? 'AI Pro 生成仍在处理中，请稍后刷新任务状态/重试。'
+              : '证件照生成仍在处理中，请稍后刷新任务状态/重试。',
+            retryable: true,
+          },
+        } : current);
+        setErrorMessage(aiProRequest.enabled
+          ? 'AI Pro 生成仍在处理中，请稍后刷新任务状态/重试。'
+          : '证件照生成仍在处理中，请稍后刷新任务状态/重试。');
       }
       void refreshAdminStats();
     } catch (error) {
@@ -413,7 +452,7 @@ export default function StudioShell({ username, onLogout }: { username?: string 
                   selectedBackground={selectedBackground}
                   aiPreview={aiPreview}
                   canCreate={Boolean(upload)}
-                  isWorking={busy || task?.status === 'queued' || task?.status === 'processing'}
+                  isWorking={busy || taskIsProcessing}
                   taskOptions={taskOptions}
                   onTemplateChange={setSelectedTemplate}
                   onBackgroundChange={(value) => {
@@ -445,7 +484,7 @@ export default function StudioShell({ username, onLogout }: { username?: string 
                 <div className="order-5 rounded-2xl border border-ink/10 bg-porcelain/62 p-4 text-xs leading-5 text-slate xl:order-none">{t('privacyNote')}</div>
 
                 <div className="order-6 xl:order-none">
-                  <ResultPanel task={task} template={template} selectedBackground={selectedBackground} />
+                  <ResultPanel task={task} template={template} selectedBackground={selectedBackground} generationKind={currentGenerationKind} />
                 </div>
               </aside>
             </div>

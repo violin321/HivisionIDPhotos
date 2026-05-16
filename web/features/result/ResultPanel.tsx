@@ -38,19 +38,59 @@ function qualityMetricSummary(metrics: Record<string, unknown> | undefined) {
   ];
 }
 
+type GenerationKind = 'idle' | 'idcreator' | 'ai-pro';
+
 type ResultPanelProps = {
   task: ProcessingTask | null;
   template?: IdPhotoTemplate;
   selectedBackground: BackgroundColor;
+  generationKind?: GenerationKind;
 };
 
-export function ResultPanel({ task, template, selectedBackground }: ResultPanelProps) {
+function GenerationProgress({ kind }: { kind: GenerationKind }) {
+  if (kind === 'idle') return null;
+  const isAiPro = kind === 'ai-pro';
+  return (
+    <div className={`mt-5 overflow-hidden rounded-[20px] border ${isAiPro ? 'border-amber/40 bg-amber/10' : 'border-measurement/25 bg-measurement/10'}`} role="status" aria-live="polite">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+        <div className="flex items-center gap-3">
+          <span className={`h-4 w-4 animate-spin rounded-full border-2 border-transparent ${isAiPro ? 'border-t-amber border-r-amber' : 'border-t-measurement border-r-measurement'}`} aria-hidden="true" />
+          <div>
+            <p className="font-semibold text-ink">{isAiPro ? 'AI Pro 生成中' : '证件照生成中…'}</p>
+            <p className="mt-0.5 text-xs text-slate">{isAiPro ? '预计 30–120 秒，请勿关闭页面；完成后自动展示 AI Pro 候选结果。' : '正在处理 IDCreator 官方结果。'}</p>
+          </div>
+        </div>
+        <span className={`rounded-full border px-3 py-1 font-mono text-[10px] uppercase tracking-[0.18em] ${isAiPro ? 'border-amber/35 text-amber' : 'border-measurement/35 text-measurement'}`}>{isAiPro ? 'AI PRO' : 'IDCREATOR'}</span>
+      </div>
+      <div className="h-1.5 bg-paper/70">
+        <div className={`h-full w-2/3 animate-pulse rounded-r-full ${isAiPro ? 'bg-amber' : 'bg-measurement'}`} />
+      </div>
+    </div>
+  );
+}
+
+export function ResultPanel({ task, template, selectedBackground, generationKind = 'idle' }: ResultPanelProps) {
   const { t } = usePreferences();
-  const succeeded = task?.status === 'succeeded' && task.officialResult;
-  const officialPreviewUrl = task?.officialResult?.previewUrl;
+  const proResults = task?.proResults ?? [];
+  const primaryProResult = task?.aiPro?.enabled ? proResults.find((item) => item.previewUrl || item.imageUrl || item.downloadUrl) : undefined;
+  const primaryResult = primaryProResult
+    ? {
+        previewUrl: primaryProResult.previewUrl ?? primaryProResult.imageUrl ?? undefined,
+        downloadUrl: primaryProResult.downloadUrl ?? primaryProResult.previewUrl ?? primaryProResult.imageUrl ?? undefined,
+        source: String(primaryProResult.promptMetadata?.provider ?? 'AI Pro'),
+        status: String(primaryProResult.promptMetadata?.providerStatus ?? primaryProResult.status),
+      }
+    : {
+        previewUrl: task?.officialResult?.previewUrl,
+        downloadUrl: task?.officialResult?.downloadUrl,
+        source: 'IDCreator',
+        status: undefined,
+      };
+  const succeeded = task?.status === 'succeeded' && Boolean(primaryResult.previewUrl || primaryResult.downloadUrl);
+  const officialPreviewUrl = primaryResult.previewUrl;
   const aiPreviewUrl = task?.aiEnhanceResult?.previewUrl;
   const aiKind = task?.options.aiEnhancePreviewKind ?? 'none';
-  const proResults = task?.proResults ?? [];
+  const primaryResultLabel = primaryProResult ? 'AI Pro 结果' : 'IDCreator';
   const pluginResults = [
     task?.layoutResult ? { key: 'layout', title: t('layoutResult'), copy: t('layoutResultCopy'), result: task.layoutResult } : null,
     task?.compressedResult ? { key: 'compressed', title: t('compressedResult'), copy: t('compressedResultCopy', { kb: String(task.compressedTargetKb ?? task.options.imageKb ?? '—') }), result: task.compressedResult } : null,
@@ -61,13 +101,15 @@ export function ResultPanel({ task, template, selectedBackground }: ResultPanelP
     <section className="rounded-[28px] border border-ink/10 bg-porcelain/80 p-6">
       <div className="flex items-center justify-between gap-4">
         <div>
-          <p className="font-mono text-[11px] uppercase tracking-[0.28em] text-slate">{t('officialResult')}</p>
-          <h2 className="mt-2 text-2xl font-semibold tracking-[-0.03em]">{t('outputCard')}</h2>
+          <p className="font-mono text-[11px] uppercase tracking-[0.28em] text-slate">{primaryProResult ? 'AI PRO PRIMARY' : t('officialResult')}</p>
+          <h2 className="mt-2 text-2xl font-semibold tracking-[-0.03em]">{primaryProResult ? 'AI Pro 主结果卡' : t('outputCard')}</h2>
         </div>
         <span className="rounded-full border border-amber/40 bg-amber/10 px-3 py-1 font-mono text-[10px] uppercase tracking-[0.22em] text-amber">
           {succeeded ? t('ready') : t('waiting')}
         </span>
       </div>
+
+      <GenerationProgress kind={generationKind} />
 
       <div className="mt-6 grid gap-5 lg:grid-cols-[190px_1fr]">
         <div className="relative mx-auto aspect-[3/4] w-full max-w-[210px] rounded-[22px] border border-ink/15 bg-[#ece6da] p-3 shadow-panel">
@@ -93,18 +135,18 @@ export function ResultPanel({ task, template, selectedBackground }: ResultPanelP
 
         <div className="flex flex-col justify-between">
           <div>
-            <p className="text-sm leading-6 text-slate">{t('resultIntro')}</p>
+            <p className="text-sm leading-6 text-slate">{primaryProResult ? '已开启 AI Pro：主结果卡优先展示 AI 生成候选；官方 IDCreator 结果仍保留在任务数据中，可用于人工核验。' : t('resultIntro')}</p>
             <dl className="mt-5 grid gap-3 text-sm sm:grid-cols-2">
               <div className="rounded-2xl border border-ink/10 bg-paper/60 p-3"><dt className="text-slate">{t('spec')}</dt><dd className="mt-1 font-semibold">{template?.label ?? '—'} · {template?.size ?? '—'}</dd></div>
               <div className="rounded-2xl border border-ink/10 bg-paper/60 p-3"><dt className="text-slate">{t('background')}</dt><dd className="mt-1 font-semibold">{t(backgroundLabelKeys[selectedBackground])}</dd></div>
-              <div className="rounded-2xl border border-ink/10 bg-paper/60 p-3"><dt className="text-slate">{t('resultSource')}</dt><dd className="mt-1 font-semibold">{succeeded ? 'IDCreator' : '—'}</dd></div>
-              <div className="rounded-2xl border border-ink/10 bg-paper/60 p-3"><dt className="text-slate">{t('aiPreview')}</dt><dd className="mt-1 font-semibold">{aiKind === 'none' ? t('disabled') : aiKind}</dd></div>
+              <div className="rounded-2xl border border-ink/10 bg-paper/60 p-3"><dt className="text-slate">{t('resultSource')}</dt><dd className="mt-1 font-semibold">{succeeded ? primaryResultLabel : '—'}</dd></div>
+              <div className="rounded-2xl border border-ink/10 bg-paper/60 p-3"><dt className="text-slate">{primaryProResult ? 'AI provider' : t('aiPreview')}</dt><dd className="mt-1 font-semibold">{primaryProResult ? `${primaryResult.source} · ${primaryResult.status ?? 'ready'}` : aiKind === 'none' ? t('disabled') : aiKind}</dd></div>
             </dl>
           </div>
 
           <div className="mt-5 flex flex-wrap gap-3">
-            <a aria-disabled={!succeeded} href={task?.officialResult?.previewUrl ?? '#'} className={`rounded-2xl px-4 py-3 text-sm font-semibold ${succeeded ? 'bg-ink text-porcelain' : 'pointer-events-none bg-line text-slate'}`}>{t('signedPreview')}</a>
-            <a aria-disabled={!succeeded} href={task?.officialResult?.downloadUrl ?? '#'} className={`rounded-2xl border px-4 py-3 text-sm font-semibold ${succeeded ? 'border-ink/15 text-ink' : 'pointer-events-none border-line text-slate'}`}>{t('signedDownload')}</a>
+            <a aria-disabled={!succeeded} href={primaryResult.previewUrl ?? '#'} className={`rounded-2xl px-4 py-3 text-sm font-semibold ${succeeded && primaryResult.previewUrl ? 'bg-ink text-porcelain' : 'pointer-events-none bg-line text-slate'}`}>{primaryProResult ? '打开 AI Pro 预览' : t('signedPreview')}</a>
+            <a aria-disabled={!succeeded} href={primaryResult.downloadUrl ?? '#'} className={`rounded-2xl border px-4 py-3 text-sm font-semibold ${succeeded && primaryResult.downloadUrl ? 'border-ink/15 text-ink' : 'pointer-events-none border-line text-slate'}`}>{primaryProResult ? '下载 AI Pro 结果' : t('signedDownload')}</a>
           </div>
         </div>
       </div>
@@ -177,7 +219,7 @@ export function ResultPanel({ task, template, selectedBackground }: ResultPanelP
           </div>
           <div className="mt-3 grid gap-3 md:grid-cols-3">
             {proResults.map((item) => {
-              const title = item.mode === 'ai_repair' ? 'AI 精修' : item.mode === 'ai_blue_formal_id_photo' ? 'AI 蓝底证件照' : '高端影棚肖像';
+              const title = item.mode === 'ai_repair' ? 'AI 精修' : item.mode === 'ai_blue_formal_id_photo' ? '证件照 AI 增强' : '高端影棚肖像';
               const providerStatus = String(item.promptMetadata?.providerStatus ?? item.status);
               const fallback = item.promptMetadata?.fallback !== false;
               const isRealProviderResult = item.mock === false && !fallback && providerStatus === 'configured';
