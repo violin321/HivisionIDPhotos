@@ -90,8 +90,11 @@ function buildProResultView(item: AiProResult): ProResultView {
   const fallbackToFree = item.fallbackToFree === true || item.promptMetadata?.fallbackToFree === true || qualityGateStatus === 'quality_failed';
   const isPassed = qualityGateStatus === 'passed';
   const badge = fallbackToFree ? 'fallback_to_free' : isPassed ? 'quality_passed' : providerStatus;
+  const fallbackReason = String(item.aiQualityReport?.fallbackReason ?? item.qualityGate?.fallbackReason ?? item.promptMetadata?.fallbackReason ?? '');
   const warning = fallbackToFree
-    ? 'AI Pro 未通过质量门，已回退 Free Core。'
+    ? fallbackReason === 'AI_PRO_ASPECT_RATIO_MISMATCH'
+      ? 'AI Pro 输出比例不符合证件照规格，已回退 Free Core。'
+      : 'AI Pro 未通过质量门，已回退 Free Core。'
     : isPassed
       ? 'AI Pro 候选通过质量门，但仍需按提交平台要求人工核验。'
       : providerStatus === 'no_credentials'
@@ -109,6 +112,15 @@ function buildProResultView(item: AiProResult): ProResultView {
     effectivePreviewUrl: item.previewUrl ?? item.imageUrl,
     effectiveDownloadUrl: item.downloadUrl,
   };
+}
+
+
+function aiProFallbackCopy(result: ProResultView): string {
+  const reason = String(result.item.aiQualityReport?.fallbackReason ?? result.item.qualityGate?.fallbackReason ?? result.item.promptMetadata?.fallbackReason ?? '');
+  if (reason === 'AI_PRO_ASPECT_RATIO_MISMATCH') {
+    return 'AI Pro 输出比例不符合证件照规格，已回退 Free Core；当前默认保留 Free Core 预览，AI Pro 下载不作为独立结果提供。';
+  }
+  return 'AI Pro 未通过质量门，已回退 Free Core；当前默认保留 Free Core 预览，AI Pro 下载不作为独立结果提供。';
 }
 
 function resultTitle(item: AiProResult) {
@@ -190,8 +202,8 @@ export function ResultPanel({ task, template, selectedBackground, generationKind
         <button type="button" role="tab" aria-selected={activeTab === 'pro'} aria-disabled={!proAvailable} disabled={!proAvailable} onClick={() => handleTabChange('pro')} className={`rounded-[14px] px-4 py-2 text-sm font-semibold transition ${activeTab === 'pro' ? 'bg-amber text-ink shadow-lg shadow-amber/15' : proAvailable ? 'text-graphite hover:bg-porcelain/70' : 'cursor-not-allowed text-slate/60'}`}>AI Pro 预览</button>
       </div>
 
-      {proFallback ? (
-        <div className="mt-3 rounded-2xl border border-amber/30 bg-amber/10 p-3 text-xs leading-5 text-graphite">AI Pro 未通过质量门，已回退 Free Core；当前默认保留 Free Core 预览，AI Pro 下载不作为独立结果提供。</div>
+      {proFallback && primaryProResult ? (
+        <div className="mt-3 rounded-2xl border border-amber/30 bg-amber/10 p-3 text-xs leading-5 text-graphite">{aiProFallbackCopy(primaryProResult)}</div>
       ) : shouldShowProTab && !proAvailable ? (
         <div className="mt-3 rounded-2xl border border-amber/20 bg-paper/65 p-3 text-xs leading-5 text-slate">AI Pro 已开启，结果生成并通过质量门后会自动切到 AI Pro 预览；生成前默认显示 Free Core。</div>
       ) : null}

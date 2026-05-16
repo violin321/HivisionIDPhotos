@@ -10,6 +10,8 @@ from PIL import Image, UnidentifiedImageError
 
 BACKGROUND_MEAN_DELTA_FAIL_THRESHOLD = 45.0
 BACKGROUND_MEAN_DELTA_WARN_THRESHOLD = 22.0
+ASPECT_RATIO_MISMATCH_FAIL_THRESHOLD = 0.03
+ASPECT_RATIO_PROPORTIONAL_RESIZE_THRESHOLD = 0.001
 
 
 def _issue(code: str, message: str, severity: str = "warning", metric: str | None = None) -> dict[str, Any]:
@@ -70,9 +72,9 @@ def evaluate_ai_pro_quality(
 ) -> dict[str, Any]:
     """Lightweight, explainable quality gate for AI Pro ID-photo candidates.
 
-    The gate is intentionally conservative for hard failures: unreadable files and
-    severe background drift fail; provider 1024x1024/non-target dimensions are
-    resized into a derivative when possible and recorded as warnings.
+    The gate is intentionally conservative for hard failures: unreadable files,
+    severe background drift, and ID-photo aspect-ratio mismatches fail. Provider
+    outputs are never non-proportionally stretched into the target spec.
     """
 
     warnings: list[dict[str, Any]] = []
@@ -107,25 +109,56 @@ def evaluate_ai_pro_quality(
     checks["file"]["readable"] = True
     height, width = image_rgb.shape[:2]
     dimensions_match = bool(width == target_width and height == target_height)
+    actual_aspect_ratio = (width / height) if height else None
+    target_aspect_ratio = (target_width / target_height) if target_width > 0 and target_height > 0 else None
+    aspect_ratio_delta = (
+        abs(float(actual_aspect_ratio) - float(target_aspect_ratio)) / float(target_aspect_ratio)
+        if actual_aspect_ratio and target_aspect_ratio
+        else None
+    )
+    aspect_ratio_within_spec = bool(aspect_ratio_delta is not None and aspect_ratio_delta <= ASPECT_RATIO_MISMATCH_FAIL_THRESHOLD)
+    can_resize_proportionally = bool(
+        aspect_ratio_delta is not None
+        and aspect_ratio_delta <= ASPECT_RATIO_PROPORTIONAL_RESIZE_THRESHOLD
+    )
     checks["dimensions"] = {
         "actual": {"width": width, "height": height},
         "expected": {"width": target_width, "height": target_height},
         "match": dimensions_match,
+        "actualAspectRatio": round(float(actual_aspect_ratio), 6) if actual_aspect_ratio else None,
+        "expectedAspectRatio": round(float(target_aspect_ratio), 6) if target_aspect_ratio else None,
+        "aspectRatioDelta": round(float(aspect_ratio_delta), 6) if aspect_ratio_delta is not None else None,
+        "aspectRatioThreshold": ASPECT_RATIO_MISMATCH_FAIL_THRESHOLD,
+        "proportionalResizeThreshold": ASPECT_RATIO_PROPORTIONAL_RESIZE_THRESHOLD,
+        "aspectRatioMatch": aspect_ratio_within_spec,
+        "canResizeProportionally": can_resize_proportionally,
         "derivative": None,
     }
     usable_path = candidate
     if not dimensions_match:
-        if target_width > 0 and target_height > 0:
+        if target_width <= 0 or target_height <= 0:
+            errors.append(_issue("AI_PRO_TARGET_SPEC_INVALID", "Target dimensions are unavailable, so AI Pro output cannot be normalized.", "error", "dimensions"))
+        elif not can_resize_proportionally:
+            usable_path = None
+            errors.append(_issue(
+                "AI_PRO_ASPECT_RATIO_MISMATCH",
+                "AI Pro 输出比例不符合证件照规格，已回退 Free Core。",
+                "error",
+                "dimensions.aspectRatioDelta",
+            ))
+        else:
             derivative_path = output_root / f"ai_pro_quality_resized_{task_id[-8:]}.png"
             resized = Image.fromarray(image_rgb).resize((target_width, target_height), Image.Resampling.LANCZOS)
             derivative_path.parent.mkdir(parents=True, exist_ok=True)
             resized.save(derivative_path, format="PNG", dpi=(target_dpi, target_dpi))
             usable_path = derivative_path
             image_rgb = np.array(resized)
-            warnings.append(_issue("AI_PRO_OUTPUT_RESIZED", "AI Pro output size differed from the target spec and was resized for the Pro candidate.", "warning", "dimensions"))
-            checks["dimensions"]["derivative"] = {"path": derivative_path.name, "width": target_width, "height": target_height}
-        else:
-            errors.append(_issue("AI_PRO_TARGET_SPEC_INVALID", "Target dimensions are unavailable, so AI Pro output cannot be normalized.", "error", "dimensions"))
+            warnings.append(_issue("AI_PRO_OUTPUT_RESIZED", "AI Pro output size differed from the target spec but preserved the ID-photo aspect ratio, so it was resized proportionally for the Pro candidate.", "warning", "dimensions"))
+            checks["dimensions"].update({
+                "actual": {"width": target_width, "height": target_height},
+                "match": True,
+                "derivative": {"path": derivative_path.name, "width": target_width, "height": target_height, "resizeMode": "proportional"},
+            })
 
     samples = _sample_edge_pixels(image_rgb)
     target = np.array([int(v) for v in background_rgb], dtype=np.float32)
@@ -157,7 +190,7 @@ def evaluate_ai_pro_quality(
 
     checks["composition"] = {
         "targetDimensions": {"width": target_width, "height": target_height},
-        "matchesFreeCoreSpec": dimensions_match or derivative_path is not None,
+        "matchesFreeCoreSpec": bool(checks.get("dimensions", {}).get("match")),
         "source": "free_core_spec_metadata",
     }
 
