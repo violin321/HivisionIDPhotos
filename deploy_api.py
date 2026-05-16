@@ -29,6 +29,13 @@ from hivision.creator.choose_handler import choose_handler
 from hivision.plugin.ai_enhance import AIEnhanceRequest, AIEnhanceService
 from hivision.plugin.ai_enhance.errors import AIEnhanceValidationError
 from hivision.plugin.ai_pro import AIProEngine
+from hivision.plugin.ai_pro.prompts import (
+    DEFAULT_PROMPT_VERSION as AI_PRO_DEFAULT_PROMPT_VERSION,
+    SUPPORTED_MODES as AI_PRO_SUPPORTED_MODES,
+    build_ai_pro_prompt,
+    flatten_prompt_templates,
+    resolve_prompt_template,
+)
 from hivision.utils import (
     add_background,
     resize_image_to_kb,
@@ -417,57 +424,7 @@ def build_template_specs() -> dict[str, dict[str, Any]]:
 # of keeping a reduced hard-coded subset.
 TEMPLATE_SPECS: dict[str, dict[str, Any]] = build_template_specs()
 
-AI_PRO_SUPPORTED_MODES = {"ai_repair", "ai_blue_formal_id_photo", "executive_headshot"}
-AI_PRO_MODE_TEMPLATE = {
-    "ai_repair": "ai_repair_basic",
-    "ai_blue_formal_id_photo": "ai_blue_formal_id_photo",
-    "executive_headshot": "executive_headshot_apple_style",
-}
-PROMPT_TEMPLATE_REGISTRY: dict[str, dict[str, Any]] = {
-    "executive_headshot_apple_style": {
-        "id": "executive_headshot_apple_style",
-        "version": "2026-05-phase1",
-        "mode": "executive_headshot",
-        "status": "mock",
-        "creditCost": 3,
-        "usageLabel": "non_official_portrait",
-        "userParamsSchema": {"outfit": "string", "expression": "string", "style": "string", "retouchLevel": "low|medium|high"},
-        "promptMetadata": {"styleFamily": "executive studio portrait", "officialUse": False, "warning": "AI 形象照 / 非正式证件用途"},
-    },
-    "ai_blue_formal_id_photo": {
-        "id": "ai_blue_formal_id_photo",
-        "version": "2026-05-phase1",
-        "mode": "ai_blue_formal_id_photo",
-        "status": "mock",
-        "creditCost": 2,
-        "usageLabel": "official_candidate",
-        "userParamsSchema": {"backgroundColor": "white|blue|red|gray|custom", "outfit": "string", "expression": "string", "retouchLevel": "low|medium|high"},
-        "promptMetadata": {"operation": "generic ID photo AI enhancement", "outfitBaseline": "dark suit, white shirt", "cameraTexture": "Canon 5D-like", "warning": "AI 增强证件照候选，需按提交平台要求核验"},
-    },
-    "cn_blue_480x640_20_40kb": {
-        "id": "cn_blue_480x640_20_40kb",
-        "version": "2026-05-phase1",
-        "mode": "ai_blue_formal_id_photo",
-        "status": "spec_profile",
-        "creditCost": 0,
-        "usageLabel": "official_candidate",
-        "userParamsSchema": {"outputSpec": "480x640", "backgroundColor": "blue"},
-        "promptMetadata": {
-            "specProfile": {"width": 480, "height": 640, "dpi": 300, "fileKbRange": [20, 40], "backgroundColor": "blue"},
-            "qualityRules": ["single frontal face", "plain blue background", "verify platform file-size constraints"],
-        },
-    },
-    "ai_repair_basic": {
-        "id": "ai_repair_basic",
-        "version": "2026-05-phase1",
-        "mode": "ai_repair",
-        "status": "mock",
-        "creditCost": 1,
-        "usageLabel": "preview_repair",
-        "userParamsSchema": {"retouchLevel": "low|medium|high", "style": "natural"},
-        "promptMetadata": {"operation": "local mock repair preview", "officialUse": False},
-    },
-}
+PROMPT_TEMPLATE_REGISTRY = {template["id"]: template for template in flatten_prompt_templates()}
 
 
 # add_background() and save_image_dpi_to_bytes() both operate on RGB-like
@@ -1202,7 +1159,7 @@ def resolve_ai_pro_spec_context(template_id: str, options: dict[str, Any], ai_pr
     }
 
 
-def _ai_pro_base_metadata(mode: str, template: dict[str, Any], ai_pro: dict[str, Any], *, mock: bool, status: str, spec_context: dict[str, Any] | None = None, error_code: str | None = None, engine_metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+def _ai_pro_base_metadata(mode: str, template: dict[str, Any], ai_pro: dict[str, Any], *, mock: bool, status: str, spec_context: dict[str, Any] | None = None, error_code: str | None = None, engine_metadata: dict[str, Any] | None = None, prompt_metadata: dict[str, Any] | None = None) -> dict[str, Any]:
     metadata = dict(template.get("promptMetadata", {}))
     if spec_context and mode == "ai_blue_formal_id_photo":
         metadata.update({
@@ -1215,6 +1172,8 @@ def _ai_pro_base_metadata(mode: str, template: dict[str, Any], ai_pro: dict[str,
             "specProfile": spec_context["specProfile"],
             "qualityRules": spec_context["qualityRules"],
         })
+    if prompt_metadata:
+        metadata.update(prompt_metadata)
     metadata.update({
         "mode": mode,
         "provider": "mock",
@@ -1222,6 +1181,8 @@ def _ai_pro_base_metadata(mode: str, template: dict[str, Any], ai_pro: dict[str,
         "model": None,
         "templateId": template["id"],
         "templateVersion": template["version"],
+        "promptTemplateId": template["id"],
+        "promptVersion": template["version"],
         "inputSource": "freeResult",
         "mock": mock,
         "fallback": mock,
@@ -1239,25 +1200,8 @@ def build_ai_pro_final_prompt(ai_pro: dict[str, Any], template: dict[str, Any], 
     params = ai_pro.get("promptParams") or {}
     if spec_context is None:
         spec_context = resolve_ai_pro_spec_context(DEFAULT_TEMPLATE_ID, {"background": params.get("backgroundColor") or DEFAULT_BACKGROUND}, ai_pro)
-    spec_profile = spec_context["specProfile"]
-    background_name = spec_context["backgroundName"]
-    background_hex = spec_context["backgroundHex"]
-    background_rgb = list(spec_context["backgroundRgb"])
-    custom_label = "custom " if spec_context["customBackground"] else ""
-    prompt_parts = [
-        f"Create a conservative AI-enhanced formal ID photo candidate from the provided deterministic IDCreator result, using a plain {custom_label}{background_name} background exactly matching RGB {background_rgb} / HEX {background_hex}.",
-        "Preserve IDCreator's existing output size, crop, head/body ratio, top margin, frontal ID-photo composition, and deterministic specification; do not reframe or resize.",
-        "Preserve the same person's identity, facial features, age, expression, pose, and natural proportions; do not beautify into a different person.",
-        f"The background must remain the selected {background_name} color with no gradient, texture, scenery, decorations, or unintended color shift.",
-        "Only apply restrained AI enhancement: natural skin tone, subtle cleanup, conservative studio lighting, and artifact reduction.",
-        "Do not present this as a guaranteed official deterministic result; it is an AI candidate requiring human/platform verification.",
-        f"Outfit guidance: {params.get('outfit') or 'dark suit, white shirt'}.",
-        f"Retouch level: {params.get('retouchLevel') or 'medium'}; style: {params.get('style') or 'natural'}.",
-        f"Target spec reference: {spec_profile}.",
-    ]
-    final_prompt = " ".join(prompt_parts)
-    final_prompt_hash = hashlib.sha256(final_prompt.encode("utf-8")).hexdigest()[:16]
-    return final_prompt, final_prompt_hash
+    built = build_ai_pro_prompt(mode=str(template.get("mode") or "ai_blue_formal_id_photo"), ai_pro=ai_pro, template=template, spec_context=spec_context, requested_version=str(template.get("version") or AI_PRO_DEFAULT_PROMPT_VERSION))
+    return built.prompt, built.prompt_hash
 
 
 def build_ai_pro_mock_results(task_id: str, free_result: dict[str, Any] | None, ai_pro: dict[str, Any], quality_report: dict[str, Any] | None, *, template_id: str = DEFAULT_TEMPLATE_ID, options: dict[str, Any] | None = None, mode_status: dict[str, dict[str, Any]] | None = None) -> list[dict[str, Any]]:
@@ -1268,10 +1212,12 @@ def build_ai_pro_mock_results(task_id: str, free_result: dict[str, Any] | None, 
     task_options = options or {}
     spec_context = resolve_ai_pro_spec_context(template_id, task_options, ai_pro)
     for mode in ai_pro.get("modes", []):
-        template = PROMPT_TEMPLATE_REGISTRY[AI_PRO_MODE_TEMPLATE.get(mode, "ai_repair_basic")]
         status_info = (mode_status or {}).get(mode, {})
+        resolution = resolve_prompt_template(mode, (ai_pro.get("promptParams") or {}).get("promptVersion"))
+        template = resolution.template
+        built_prompt = build_ai_pro_prompt(mode=mode, ai_pro=ai_pro, template=template, spec_context=spec_context, requested_version=resolution.prompt_version, fallback_reason=resolution.fallback_reason)
         metadata = _ai_pro_base_metadata(
-            mode,
+            resolution.mode,
             template,
             ai_pro,
             mock=True,
@@ -1279,6 +1225,7 @@ def build_ai_pro_mock_results(task_id: str, free_result: dict[str, Any] | None, 
             spec_context=spec_context,
             error_code=status_info.get("errorCode"),
             engine_metadata=status_info.get("metadata"),
+            prompt_metadata=built_prompt.metadata,
         )
         metadata["mockSource"] = "freeResult"
         results.append({
@@ -1306,15 +1253,17 @@ def build_ai_pro_results(task_id: str, result_dir: Path, ai_pro: dict[str, Any],
     results: list[dict[str, Any]] = []
     stage_modes: dict[str, str] = {}
     for mode in ai_pro.get("modes", []):
-        template = PROMPT_TEMPLATE_REGISTRY[AI_PRO_MODE_TEMPLATE.get(mode, "ai_repair_basic")]
-        if mode != "ai_blue_formal_id_photo":
+        resolution = resolve_prompt_template(mode, (ai_pro.get("promptParams") or {}).get("promptVersion"))
+        template = resolution.template
+        if resolution.mode != "ai_blue_formal_id_photo":
             mock_result = build_ai_pro_mock_results(task_id, free_result, {**ai_pro, "modes": [mode]}, quality_report, template_id=template_id, options=task_options)[0]
             mock_result["status"] = "mock_completed"
             results.append(mock_result)
             stage_modes[mode] = "mock_completed"
             continue
 
-        final_prompt, final_prompt_hash = build_ai_pro_final_prompt(ai_pro, template, spec_context)
+        built_prompt = build_ai_pro_prompt(mode=mode, ai_pro=ai_pro, template=template, spec_context=spec_context, requested_version=resolution.prompt_version, fallback_reason=resolution.fallback_reason)
+        final_prompt, final_prompt_hash = built_prompt.prompt, built_prompt.prompt_hash
         input_filename = "official_idcreator.jpg" if (result_dir / "official_idcreator.jpg").exists() else "official_idcreator.png"
         engine_result = ai_pro_engine.run_blue_formal_id_photo(
             input_path=result_dir / input_filename,
@@ -1332,6 +1281,7 @@ def build_ai_pro_results(task_id: str, result_dir: Path, ai_pro: dict[str, Any],
             spec_context=spec_context,
             error_code=engine_result.metadata.get("errorCode"),
             engine_metadata={**engine_result.metadata, "finalPromptHash": engine_result.metadata.get("finalPromptHash") or final_prompt_hash},
+            prompt_metadata=built_prompt.metadata,
         )
         if engine_result.status == "completed" and engine_result.image_path:
             result_file = build_result_file(task_id, "ai_pro_blue", engine_result.image_path.name)
