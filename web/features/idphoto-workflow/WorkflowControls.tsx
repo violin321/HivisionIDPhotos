@@ -240,6 +240,7 @@ export function WorkflowControls({
   const printLayoutEnabled = Boolean(taskOptions.printLayoutEnabled);
   const customBackgroundEnabled = Boolean(taskOptions.customBackgroundEnabled);
   const customRgb = currentCustomRgb(taskOptions);
+  const aiProGenerating = Boolean(taskOptions.aiPro?.enabled && isWorking);
   const updateCustomHex = (value: string) => {
     const normalized = normalizeHex(value);
     onTaskOptionsChange({
@@ -392,6 +393,18 @@ export function WorkflowControls({
 
       <SpecSelectorDialog open={selectorOpen} templates={templates} selectedTemplate={selectedTemplate} onClose={() => setSelectorOpen(false)} onTemplateChange={onTemplateChange} />
 
+      {isWorking ? (
+        <div className={`mt-4 rounded-[20px] border p-4 text-sm leading-6 shadow-sm ${aiProGenerating ? 'border-amber/40 bg-amber/10 text-graphite shadow-amber/10' : 'border-measurement/25 bg-measurement/10 text-graphite shadow-measurement/10'}`} role="status" aria-live="polite">
+          <div className="flex items-start gap-3">
+            <span className={`mt-0.5 h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-transparent ${aiProGenerating ? 'border-t-amber border-r-amber' : 'border-t-measurement border-r-measurement'}`} aria-hidden="true" />
+            <div>
+              <p className="font-semibold text-ink">{aiProGenerating ? 'AI Pro 正在生成…预计 30–120 秒，请勿关闭页面' : '证件照生成中…'}</p>
+              <p className="mt-1 text-xs text-slate">{aiProGenerating ? '真实 provider 可能需要几十秒，完成后会自动切换到结果或错误提示。' : '正在调用 IDCreator 生成正式证件照结果。'}</p>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <details className="mt-4 rounded-[18px] border border-ink/10 bg-paper/65 p-4">
           <summary className="flex cursor-pointer list-none items-center justify-between gap-3 marker:hidden">
             <div>
@@ -527,7 +540,7 @@ export function WorkflowControls({
         onClick={onCreateTask}
         className="mt-4 w-full rounded-2xl bg-measurement px-5 py-4 text-sm font-semibold text-porcelain shadow-lg shadow-measurement/20 transition hover:-translate-y-0.5 hover:bg-[#185b63] disabled:cursor-not-allowed disabled:opacity-45"
       >
-        03 · {isWorking ? t('advancingTask') : t('createTask')}
+        03 · {isWorking ? (aiProGenerating ? 'AI Pro 生成中…' : t('advancingTask')) : t('createTask')}
       </button>
     </section>
   );

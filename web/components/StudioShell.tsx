@@ -261,6 +261,8 @@ export default function StudioShell({ username, onLogout }: { username?: string 
   });
 
   const template = useMemo(() => templateOptions.find((item) => item.templateId === selectedTemplate), [selectedTemplate, templateOptions]);
+  const taskIsProcessing = task?.status === 'queued' || task?.status === 'processing';
+  const currentGenerationKind = taskIsProcessing && task.options.aiPro?.enabled ? 'ai-pro' : taskIsProcessing ? 'idcreator' : 'idle';
   async function refreshAdminStats() {
     try {
       setAdminStats(await getAdminStats());
@@ -420,7 +422,7 @@ export default function StudioShell({ username, onLogout }: { username?: string 
                   selectedBackground={selectedBackground}
                   aiPreview={aiPreview}
                   canCreate={Boolean(upload)}
-                  isWorking={busy || task?.status === 'queued' || task?.status === 'processing'}
+                  isWorking={busy || taskIsProcessing}
                   taskOptions={taskOptions}
                   onTemplateChange={setSelectedTemplate}
                   onBackgroundChange={(value) => {
@@ -452,7 +454,7 @@ export default function StudioShell({ username, onLogout }: { username?: string 
                 <div className="order-5 rounded-2xl border border-ink/10 bg-porcelain/62 p-4 text-xs leading-5 text-slate xl:order-none">{t('privacyNote')}</div>
 
                 <div className="order-6 xl:order-none">
-                  <ResultPanel task={task} template={template} selectedBackground={selectedBackground} />
+                  <ResultPanel task={task} template={template} selectedBackground={selectedBackground} generationKind={currentGenerationKind} />
                 </div>
               </aside>
             </div>

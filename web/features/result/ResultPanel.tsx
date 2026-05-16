@@ -38,13 +38,38 @@ function qualityMetricSummary(metrics: Record<string, unknown> | undefined) {
   ];
 }
 
+type GenerationKind = 'idle' | 'idcreator' | 'ai-pro';
+
 type ResultPanelProps = {
   task: ProcessingTask | null;
   template?: IdPhotoTemplate;
   selectedBackground: BackgroundColor;
+  generationKind?: GenerationKind;
 };
 
-export function ResultPanel({ task, template, selectedBackground }: ResultPanelProps) {
+function GenerationProgress({ kind }: { kind: GenerationKind }) {
+  if (kind === 'idle') return null;
+  const isAiPro = kind === 'ai-pro';
+  return (
+    <div className={`mt-5 overflow-hidden rounded-[20px] border ${isAiPro ? 'border-amber/40 bg-amber/10' : 'border-measurement/25 bg-measurement/10'}`} role="status" aria-live="polite">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+        <div className="flex items-center gap-3">
+          <span className={`h-4 w-4 animate-spin rounded-full border-2 border-transparent ${isAiPro ? 'border-t-amber border-r-amber' : 'border-t-measurement border-r-measurement'}`} aria-hidden="true" />
+          <div>
+            <p className="font-semibold text-ink">{isAiPro ? 'AI Pro 生成中' : '证件照生成中…'}</p>
+            <p className="mt-0.5 text-xs text-slate">{isAiPro ? '预计 30–120 秒，请勿关闭页面；完成后自动展示 AI Pro 候选结果。' : '正在处理 IDCreator 官方结果。'}</p>
+          </div>
+        </div>
+        <span className={`rounded-full border px-3 py-1 font-mono text-[10px] uppercase tracking-[0.18em] ${isAiPro ? 'border-amber/35 text-amber' : 'border-measurement/35 text-measurement'}`}>{isAiPro ? 'AI PRO' : 'IDCREATOR'}</span>
+      </div>
+      <div className="h-1.5 bg-paper/70">
+        <div className={`h-full w-2/3 animate-pulse rounded-r-full ${isAiPro ? 'bg-amber' : 'bg-measurement'}`} />
+      </div>
+    </div>
+  );
+}
+
+export function ResultPanel({ task, template, selectedBackground, generationKind = 'idle' }: ResultPanelProps) {
   const { t } = usePreferences();
   const proResults = task?.proResults ?? [];
   const primaryProResult = task?.aiPro?.enabled ? proResults.find((item) => item.previewUrl || item.imageUrl || item.downloadUrl) : undefined;
@@ -83,6 +108,8 @@ export function ResultPanel({ task, template, selectedBackground }: ResultPanelP
           {succeeded ? t('ready') : t('waiting')}
         </span>
       </div>
+
+      <GenerationProgress kind={generationKind} />
 
       <div className="mt-6 grid gap-5 lg:grid-cols-[190px_1fr]">
         <div className="relative mx-auto aspect-[3/4] w-full max-w-[210px] rounded-[22px] border border-ink/15 bg-[#ece6da] p-3 shadow-panel">
