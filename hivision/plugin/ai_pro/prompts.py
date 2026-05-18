@@ -6,14 +6,15 @@ from typing import Any
 
 DEFAULT_PROMPT_VERSION = "2026-05-phase1"
 FALLBACK_TEMPLATE_ID = "ai_repair_basic"
-SUPPORTED_MODES = {"ai_repair", "ai_blue_formal_id_photo", "executive_headshot"}
+SUPPORTED_MODES = {"ai_repair", "ai_blue_formal_id_photo", "executive_headshot", "social_photo"}
+SOCIAL_PHOTO_STYLES = {"professional_social", "friendly_social"}
 
 MODE_ALIASES: dict[str, str] = {
     "repair": "ai_repair",
     "ai_repair": "ai_repair",
     "background_template": "ai_blue_formal_id_photo",
     "outfit": "executive_headshot",
-    "social_photo": "executive_headshot",
+    "social_photo": "social_photo",
     "ai_blue_formal_id_photo": "ai_blue_formal_id_photo",
     "executive_headshot": "executive_headshot",
 }
@@ -22,6 +23,7 @@ MODE_TEMPLATE: dict[str, str] = {
     "ai_repair": "ai_repair_basic",
     "ai_blue_formal_id_photo": "ai_blue_formal_id_photo",
     "executive_headshot": "executive_headshot_apple_style",
+    "social_photo": "professional_social",
 }
 
 PROMPT_TEMPLATE_REGISTRY: dict[str, dict[str, dict[str, Any]]] = {
@@ -61,6 +63,53 @@ PROMPT_TEMPLATE_REGISTRY: dict[str, dict[str, dict[str, Any]]] = {
             "promptMetadata": {
                 "specProfile": {"width": 480, "height": 640, "dpi": 300, "fileKbRange": [20, 40], "backgroundColor": "blue"},
                 "qualityRules": ["single frontal face", "plain blue background", "verify platform file-size constraints"],
+            },
+        },
+    },
+
+    "professional_social": {
+        DEFAULT_PROMPT_VERSION: {
+            "id": "professional_social",
+            "version": DEFAULT_PROMPT_VERSION,
+            "mode": "social_photo",
+            "status": "mock",
+            "creditCost": 0,
+            "usageLabel": "non_official_social_photo",
+            "userParamsSchema": {"socialStyle": "professional_social", "outputRatio": "1:1"},
+            "promptMetadata": {
+                "domain": "social_photo",
+                "socialStyle": "professional_social",
+                "styleFamily": "professional social profile photo",
+                "identityPreservation": True,
+                "realistic": True,
+                "noFaceReshaping": True,
+                "noAgeGenderChange": True,
+                "notForOfficialDocument": True,
+                "officialUse": False,
+                "warning": "轻社交头像 / 非正式证件用途",
+            },
+        },
+    },
+    "friendly_social": {
+        DEFAULT_PROMPT_VERSION: {
+            "id": "friendly_social",
+            "version": DEFAULT_PROMPT_VERSION,
+            "mode": "social_photo",
+            "status": "mock",
+            "creditCost": 0,
+            "usageLabel": "non_official_social_photo",
+            "userParamsSchema": {"socialStyle": "friendly_social", "outputRatio": "1:1"},
+            "promptMetadata": {
+                "domain": "social_photo",
+                "socialStyle": "friendly_social",
+                "styleFamily": "friendly social profile photo",
+                "identityPreservation": True,
+                "realistic": True,
+                "noFaceReshaping": True,
+                "noAgeGenderChange": True,
+                "notForOfficialDocument": True,
+                "officialUse": False,
+                "warning": "轻社交头像 / 非正式证件用途",
             },
         },
     },
@@ -122,10 +171,14 @@ def canonical_mode(mode: str | None) -> tuple[str, str | None]:
     return "ai_repair", f"unknown_mode:{requested}"
 
 
-def resolve_prompt_template(mode: str | None, requested_version: str | None = None) -> PromptResolution:
+def resolve_prompt_template(mode: str | None, requested_version: str | None = None, user_params: dict[str, Any] | None = None) -> PromptResolution:
     requested_mode = str(mode or "").strip() or "ai_blue_formal_id_photo"
     resolved_mode, mode_fallback = canonical_mode(requested_mode)
     template_id = MODE_TEMPLATE.get(resolved_mode, FALLBACK_TEMPLATE_ID)
+    if resolved_mode == "social_photo":
+        style = str((user_params or {}).get("socialStyle") or "").strip()
+        if style in SOCIAL_PHOTO_STYLES:
+            template_id = style
     versions = PROMPT_TEMPLATE_REGISTRY.get(template_id)
     fallback_parts = [mode_fallback] if mode_fallback else []
     if not versions:
@@ -167,7 +220,7 @@ def build_ai_pro_prompt(
     requested_version: str | None = None,
     fallback_reason: str | None = None,
 ) -> BuiltAIProPrompt:
-    resolution = resolve_prompt_template(mode, requested_version)
+    resolution = resolve_prompt_template(mode, requested_version, ai_pro.get("promptParams") or {})
     resolved_template = dict(template or resolution.template)
     params = ai_pro.get("promptParams") or {}
     spec_profile = (spec_context or {}).get("specProfile") if spec_context else None
@@ -188,6 +241,24 @@ def build_ai_pro_prompt(
             f"Outfit guidance: {params.get('outfit') or 'dark suit, white shirt'}.",
             f"Retouch level: {params.get('retouchLevel') or 'medium'}; style: {params.get('style') or 'natural'}.",
             f"Target spec reference: {spec_profile}.",
+        ]
+    elif resolution.mode == "social_photo":
+        social_style = str(params.get("socialStyle") or resolved_template.get("id") or "professional_social")
+        output_ratio = str(params.get("outputRatio") or "1:1")
+        style_direction = (
+            "professional, trustworthy, modern work-network avatar"
+            if social_style == "professional_social"
+            else "friendly, approachable, natural social avatar"
+        )
+        prompt_parts = [
+            f"Create a narrow-scope social_photo from the provided existing ID photo input using the {social_style} preset.",
+            "This is for informal social/profile use only and is not an official ID photo or official document output.",
+            "Preserve the same person's identity, facial features, face shape, age, gender presentation, hairstyle, expression, and natural proportions.",
+            "Do not reshape the face, do not change age or gender, do not make the person look like someone else, and do not apply exaggerated beautification.",
+            "Keep the result realistic and photo-like, with conservative lighting and cleanup only.",
+            f"Style direction: {style_direction}.",
+            f"Output ratio: {output_ratio}; keep a centered head-and-shoulders composition suitable for a light social avatar.",
+            f"Selected controlled params: {{'socialStyle': {social_style!r}, 'outputRatio': {output_ratio!r}}}.",
         ]
     else:
         prompt_parts = [

@@ -5,7 +5,8 @@
 export type TaskStatus = 'queued' | 'processing' | 'succeeded' | 'failed' | 'expired';
 export type Platform = 'web' | 'mobileWeb' | 'wechatMiniapp';
 export type AiMode = 'none' | 'preview' | 'enhance';
-export type AiProMode = 'ai_repair' | 'ai_blue_formal_id_photo' | 'executive_headshot';
+export type AiProMode = 'ai_repair' | 'ai_blue_formal_id_photo' | 'executive_headshot' | 'social_photo';
+export type SocialStyle = 'professional_social' | 'friendly_social';
 export type BackgroundColor = 'white' | 'blue' | 'red' | 'gray';
 export type TaskBackgroundColor = BackgroundColor | 'custom';
 export type QualityIssueSeverity = 'warning' | 'error';
@@ -55,6 +56,8 @@ export interface AiProRequest {
     retouchLevel?: string;
     outputSpec?: string;
     style?: string;
+    socialStyle?: SocialStyle;
+    outputRatio?: string;
     [key: string]: unknown;
   };
   consentAccepted: boolean;
@@ -401,11 +404,11 @@ async function mockGetTask(task: ProcessingTask, tick: number): Promise<Processi
       status: 'mock_completed',
       imageUrl: officialResult.previewUrl,
       previewUrl: officialResult.previewUrl,
-      usageLabel: mode === 'executive_headshot' ? 'non_official_portrait' : mode === 'ai_blue_formal_id_photo' ? 'official_candidate' : 'preview_repair',
-      promptTemplateId: mode === 'executive_headshot' ? 'executive_headshot_apple_style' : mode === 'ai_blue_formal_id_photo' ? 'ai_blue_formal_id_photo' : 'ai_repair_basic',
+      usageLabel: mode === 'social_photo' ? 'non_official_social_photo' : mode === 'executive_headshot' ? 'non_official_portrait' : mode === 'ai_blue_formal_id_photo' ? 'official_candidate' : 'preview_repair',
+      promptTemplateId: mode === 'social_photo' ? ((task.aiPro?.promptParams.socialStyle as string | undefined) ?? 'professional_social') : mode === 'executive_headshot' ? 'executive_headshot_apple_style' : mode === 'ai_blue_formal_id_photo' ? 'ai_blue_formal_id_photo' : 'ai_repair_basic',
       templateVersion: '2026-05-phase1',
       paid: false,
-      qualityReport: { mock: true, source: 'core_quality_report' },
+      qualityReport: { mock: true, source: 'core_quality_report', ...(mode === 'social_photo' ? { mode: 'social_photo', style: task.aiPro?.promptParams.socialStyle ?? 'professional_social', notForOfficialDocument: true } : {}) },
       downloadUrl: officialResult.downloadUrl,
       promptMetadata: {
         provider: 'mock',
@@ -431,6 +434,17 @@ async function mockGetTask(task: ProcessingTask, tick: number): Promise<Processi
             backgroundRgb: task.options.backgroundRgb,
             customBackground: task.options.background === 'custom' || Boolean(task.options.customBackgroundEnabled),
           },
+        } : {}),
+        ...(mode === 'social_photo' ? {
+          domain: 'social_photo',
+          socialStyle: task.aiPro?.promptParams.socialStyle ?? 'professional_social',
+          outputRatio: task.aiPro?.promptParams.outputRatio ?? '1:1',
+          notForOfficialDocument: true,
+          officialUse: false,
+          identityPreservation: true,
+          realistic: true,
+          noFaceReshaping: true,
+          noAgeGenderChange: true,
         } : {}),
       },
       mock: true,
