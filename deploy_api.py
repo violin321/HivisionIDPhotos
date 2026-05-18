@@ -1292,7 +1292,7 @@ def build_ai_pro_results(task_id: str, result_dir: Path, ai_pro: dict[str, Any],
     for mode in ai_pro.get("modes", []):
         resolution = resolve_prompt_template(mode, (ai_pro.get("promptParams") or {}).get("promptVersion"), ai_pro.get("promptParams") or {})
         template = resolution.template
-        if resolution.mode != "ai_blue_formal_id_photo":
+        if resolution.mode not in {"ai_blue_formal_id_photo", "social_photo"}:
             mock_result = build_ai_pro_mock_results(task_id, free_result, {**ai_pro, "modes": [mode]}, quality_report, template_id=template_id, options=task_options)[0]
             mock_result["status"] = "mock_completed"
             results.append(mock_result)
@@ -1302,14 +1302,25 @@ def build_ai_pro_results(task_id: str, result_dir: Path, ai_pro: dict[str, Any],
         built_prompt = build_ai_pro_prompt(mode=mode, ai_pro=ai_pro, template=template, spec_context=spec_context, requested_version=resolution.prompt_version, fallback_reason=resolution.fallback_reason)
         final_prompt, final_prompt_hash = built_prompt.prompt, built_prompt.prompt_hash
         input_filename = "official_idcreator.jpg" if (result_dir / "official_idcreator.jpg").exists() else "official_idcreator.png"
-        engine_result = ai_pro_engine.run_blue_formal_id_photo(
-            input_path=result_dir / input_filename,
-            output_dir=result_dir,
-            final_prompt=final_prompt,
-            template_id=template["id"],
-            template_version=template["version"],
-            target_spec=spec_context["spec"],
-        )
+        target_spec = {"width": 1024, "height": 1024, "dpi": int(spec_context["spec"].get("dpi") or 300)} if resolution.mode == "social_photo" else spec_context["spec"]
+        if resolution.mode == "social_photo":
+            engine_result = ai_pro_engine.run_social_photo(
+                input_path=result_dir / input_filename,
+                output_dir=result_dir,
+                final_prompt=final_prompt,
+                template_id=template["id"],
+                template_version=template["version"],
+                target_spec=target_spec,
+            )
+        else:
+            engine_result = ai_pro_engine.run_blue_formal_id_photo(
+                input_path=result_dir / input_filename,
+                output_dir=result_dir,
+                final_prompt=final_prompt,
+                template_id=template["id"],
+                template_version=template["version"],
+                target_spec=target_spec,
+            )
         metadata = _ai_pro_base_metadata(
             mode,
             template,
@@ -1327,10 +1338,12 @@ def build_ai_pro_results(task_id: str, result_dir: Path, ai_pro: dict[str, Any],
                 source_image_path=result_dir / input_filename,
                 output_dir=result_dir,
                 task_id=task_id,
-                target_spec=spec_context["spec"],
-                background_rgb=spec_context["backgroundRgb"],
+                target_spec=target_spec,
+                background_rgb=spec_context["backgroundRgb"] if resolution.mode != "social_photo" else None,
                 free_result=free_result,
                 core_quality_report=quality_report,
+                mode=resolution.mode,
+                social_style=(ai_pro.get("promptParams") or {}).get("socialStyle"),
             )
             quality_gate_status = "passed" if ai_quality_report.get("passed") else "quality_failed"
             metadata.update({
@@ -1342,7 +1355,7 @@ def build_ai_pro_results(task_id: str, result_dir: Path, ai_pro: dict[str, Any],
             })
             if ai_quality_report.get("passed") and ai_quality_report.get("usableImagePath"):
                 usable_image_path = Path(str(ai_quality_report["usableImagePath"]))
-                result_file = build_result_file(task_id, "ai_pro_blue", usable_image_path.name)
+                result_file = build_result_file(task_id, "social_photo" if resolution.mode == "social_photo" else "ai_pro_blue", usable_image_path.name)
                 results.append({
                     "mode": mode,
                     "status": "completed",
@@ -1358,7 +1371,7 @@ def build_ai_pro_results(task_id: str, result_dir: Path, ai_pro: dict[str, Any],
                     "fallbackToFree": False,
                     "qualityGate": {"status": "passed", "passed": True},
                     "aiQualityReport": ai_quality_report,
-                    "qualityReport": {"source": "ai_provider_quality_gate", "corePassed": bool((quality_report or {}).get("passed")), "mock": False, "passed": True},
+                    "qualityReport": {"source": "ai_provider_quality_gate", "corePassed": bool((quality_report or {}).get("passed")), "mock": False, "passed": True, **({"mode": "social_photo", "style": metadata.get("socialStyle"), "notForOfficialDocument": True} if resolution.mode == "social_photo" else {})},
                     "promptMetadata": metadata,
                     "mock": False,
                 })

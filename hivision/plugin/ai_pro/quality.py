@@ -16,6 +16,11 @@ IDENTITY_CENTER_DELTA_WARN_THRESHOLD = 0.07
 IDENTITY_CENTER_DELTA_FAIL_THRESHOLD = 0.12
 IDENTITY_SIZE_RATIO_DELTA_WARN_THRESHOLD = 0.18
 IDENTITY_SIZE_RATIO_DELTA_FAIL_THRESHOLD = 0.30
+SOCIAL_PHOTO_COMPOSITION_CENTER_WARN_THRESHOLD = 0.12
+SOCIAL_PHOTO_COMPOSITION_FACE_WIDTH_MIN = 0.18
+SOCIAL_PHOTO_COMPOSITION_FACE_WIDTH_MAX = 0.68
+SOCIAL_PHOTO_REALISM_EDGE_DENSITY_WARN_THRESHOLD = 0.012
+SOCIAL_PHOTO_REALISM_COLOR_COUNT_WARN_THRESHOLD = 48
 
 
 
@@ -138,6 +143,77 @@ def _read_rgb_image(path: Path | str | None) -> np.ndarray | None:
         return None
 
 
+def _evaluate_social_composition(image_rgb: np.ndarray, face_count: int | None, detector: str, rectangles: list[list[int]]) -> dict[str, Any]:
+    height, width = image_rgb.shape[:2]
+    check: dict[str, Any] = {
+        "detector": detector,
+        "status": "unavailable",
+        "faceCount": face_count,
+        "rectangles": rectangles[:3],
+        "policy": "warning_only_v1",
+        "expected": "single centered head-and-shoulders social avatar",
+    }
+    if face_count is None:
+        check["reason"] = "face_detector_unavailable"
+        return check
+    if face_count != 1 or not rectangles:
+        check.update({"status": "warning", "reason": "single_face_not_confident"})
+        return check
+
+    face = _face_payload(rectangles[0], image_rgb.shape)
+    center_dx = abs(float(face["center"]["x"]) - 0.5)
+    face_width_ratio = float(face["widthRatio"])
+    face_height_ratio = float(face["heightRatio"])
+    issues: list[str] = []
+    if center_dx > SOCIAL_PHOTO_COMPOSITION_CENTER_WARN_THRESHOLD:
+        issues.append("off_center_subject")
+    if face_width_ratio < SOCIAL_PHOTO_COMPOSITION_FACE_WIDTH_MIN:
+        issues.append("subject_too_small")
+    elif face_width_ratio > SOCIAL_PHOTO_COMPOSITION_FACE_WIDTH_MAX:
+        issues.append("subject_too_large")
+    check.update({
+        "status": "warning" if issues else "passed",
+        "face": face,
+        "centerDelta": {"x": round(center_dx, 4), "warnThreshold": SOCIAL_PHOTO_COMPOSITION_CENTER_WARN_THRESHOLD},
+        "faceWidthRatio": round(face_width_ratio, 4),
+        "faceHeightRatio": round(face_height_ratio, 4),
+        "thresholds": {"faceWidthMin": SOCIAL_PHOTO_COMPOSITION_FACE_WIDTH_MIN, "faceWidthMax": SOCIAL_PHOTO_COMPOSITION_FACE_WIDTH_MAX},
+        "issues": issues,
+        "imageDimensions": {"width": width, "height": height},
+    })
+    return check
+
+
+def _evaluate_social_realism(image_rgb: np.ndarray) -> dict[str, Any]:
+    # Conservative, auditable heuristics only. This cannot prove realism; it can
+    # flag degenerate/cartoon-like outputs with very low texture/color variety.
+    height, width = image_rgb.shape[:2]
+    small = cv2.resize(image_rgb, (min(width, 256), min(height, 256)), interpolation=cv2.INTER_AREA) if width and height else image_rgb
+    gray = cv2.cvtColor(small, cv2.COLOR_RGB2GRAY)
+    edges = cv2.Canny(gray, 80, 160)
+    edge_density = float(np.count_nonzero(edges) / edges.size) if edges.size else 0.0
+    quantized = (small // 32).reshape(-1, 3) if small.size else np.empty((0, 3), dtype=np.uint8)
+    color_bucket_count = int(np.unique(quantized, axis=0).shape[0]) if quantized.size else 0
+    issues: list[str] = []
+    if edge_density < SOCIAL_PHOTO_REALISM_EDGE_DENSITY_WARN_THRESHOLD:
+        issues.append("very_low_texture_edges")
+    if color_bucket_count < SOCIAL_PHOTO_REALISM_COLOR_COUNT_WARN_THRESHOLD:
+        issues.append("very_low_color_variety")
+    return {
+        "status": "warning" if issues else "passed",
+        "policy": "warning_only_v1",
+        "heuristics": "edge_density_and_color_bucket_count",
+        "edgeDensity": round(edge_density, 5),
+        "colorBucketCount": color_bucket_count,
+        "thresholds": {
+            "edgeDensityWarnMin": SOCIAL_PHOTO_REALISM_EDGE_DENSITY_WARN_THRESHOLD,
+            "colorBucketCountWarnMin": SOCIAL_PHOTO_REALISM_COLOR_COUNT_WARN_THRESHOLD,
+        },
+        "issues": issues,
+        "note": "Heuristic warnings require human review and do not prove non-realism.",
+    }
+
+
 def _evaluate_identity_check(source_rgb: np.ndarray | None, ai_rgb: np.ndarray) -> dict[str, Any]:
     check: dict[str, Any] = {
         "detector": "opencv_haar",
@@ -185,9 +261,11 @@ def evaluate_ai_pro_quality(
     output_dir: Path | str,
     task_id: str,
     target_spec: dict[str, Any],
-    background_rgb: tuple[int, int, int] | list[int],
+    background_rgb: tuple[int, int, int] | list[int] | None = None,
     free_result: dict[str, Any] | None = None,
     core_quality_report: dict[str, Any] | None = None,
+    mode: str = "ai_blue_formal_id_photo",
+    social_style: str | None = None,
 ) -> dict[str, Any]:
     """Lightweight, explainable quality gate for AI Pro ID-photo candidates.
 
@@ -279,26 +357,32 @@ def evaluate_ai_pro_quality(
                 "derivative": {"path": derivative_path.name, "width": target_width, "height": target_height, "resizeMode": "proportional"},
             })
 
-    samples = _sample_edge_pixels(image_rgb)
-    target = np.array([int(v) for v in background_rgb], dtype=np.float32)
-    if samples.size:
-        mean_rgb = samples.astype(np.float32).mean(axis=0)
-        mean_delta = float(np.abs(mean_rgb - target).mean())
-        max_delta = float(np.abs(mean_rgb - target).max())
-        checks["backgroundColor"] = {
-            "targetRgb": [int(v) for v in background_rgb],
-            "sampleMeanRgb": [round(float(v), 2) for v in mean_rgb],
-            "meanDelta": round(mean_delta, 3),
-            "maxChannelDelta": round(max_delta, 3),
-            "thresholds": {"warn": BACKGROUND_MEAN_DELTA_WARN_THRESHOLD, "fail": BACKGROUND_MEAN_DELTA_FAIL_THRESHOLD},
-        }
-        if mean_delta > BACKGROUND_MEAN_DELTA_FAIL_THRESHOLD:
-            errors.append(_issue("AI_PRO_BACKGROUND_COLOR_FAILED", "AI Pro background color differs too much from the target background.", "error", "backgroundColor.meanDelta"))
-        elif mean_delta > BACKGROUND_MEAN_DELTA_WARN_THRESHOLD:
-            warnings.append(_issue("AI_PRO_BACKGROUND_COLOR_WARNING", "AI Pro background color has visible drift from the target background.", "warning", "backgroundColor.meanDelta"))
-    else:
+    if mode == "social_photo":
+        checks["backgroundColor"] = {"skipped": True, "reason": "social_photo_has_no_fixed_official_background"}
+    elif background_rgb is None:
         checks["backgroundColor"] = {"available": False}
-        warnings.append(_issue("AI_PRO_BACKGROUND_SAMPLE_UNAVAILABLE", "Could not sample AI Pro background color; manual review is required.", "warning", "backgroundColor"))
+        warnings.append(_issue("AI_PRO_BACKGROUND_SAMPLE_UNAVAILABLE", "Target background color was unavailable; manual review is required.", "warning", "backgroundColor"))
+    else:
+        samples = _sample_edge_pixels(image_rgb)
+        target = np.array([int(v) for v in background_rgb], dtype=np.float32)
+        if samples.size:
+            mean_rgb = samples.astype(np.float32).mean(axis=0)
+            mean_delta = float(np.abs(mean_rgb - target).mean())
+            max_delta = float(np.abs(mean_rgb - target).max())
+            checks["backgroundColor"] = {
+                "targetRgb": [int(v) for v in background_rgb],
+                "sampleMeanRgb": [round(float(v), 2) for v in mean_rgb],
+                "meanDelta": round(mean_delta, 3),
+                "maxChannelDelta": round(max_delta, 3),
+                "thresholds": {"warn": BACKGROUND_MEAN_DELTA_WARN_THRESHOLD, "fail": BACKGROUND_MEAN_DELTA_FAIL_THRESHOLD},
+            }
+            if mean_delta > BACKGROUND_MEAN_DELTA_FAIL_THRESHOLD:
+                errors.append(_issue("AI_PRO_BACKGROUND_COLOR_FAILED", "AI Pro background color differs too much from the target background.", "error", "backgroundColor.meanDelta"))
+            elif mean_delta > BACKGROUND_MEAN_DELTA_WARN_THRESHOLD:
+                warnings.append(_issue("AI_PRO_BACKGROUND_COLOR_WARNING", "AI Pro background color has visible drift from the target background.", "warning", "backgroundColor.meanDelta"))
+        else:
+            checks["backgroundColor"] = {"available": False}
+            warnings.append(_issue("AI_PRO_BACKGROUND_SAMPLE_UNAVAILABLE", "Could not sample AI Pro background color; manual review is required.", "warning", "backgroundColor"))
 
     face_count, detector, rectangles = _detect_face_count(image_rgb)
     checks["face"] = {"detector": detector, "count": face_count, "rectangles": rectangles[:3]}
@@ -316,13 +400,31 @@ def evaluate_ai_pro_quality(
     elif identity_check.get("status") == "unavailable":
         warnings.append(_issue("AI_PRO_IDENTITY_CHECK_UNAVAILABLE", "Identity consistency check could not get confident single-face detections; this does not block fallback-safe delivery.", "warning", "identity"))
 
-    checks["composition"] = {
-        "targetDimensions": {"width": target_width, "height": target_height},
-        "matchesFreeCoreSpec": bool(checks.get("dimensions", {}).get("match")),
-        "source": "free_core_spec_metadata",
-    }
+    if mode == "social_photo":
+        composition_check = _evaluate_social_composition(image_rgb, face_count, detector, rectangles)
+        realism_check = _evaluate_social_realism(image_rgb)
+        checks["composition"] = composition_check
+        checks["realism"] = realism_check
+        checks["socialPhoto"] = {
+            "style": social_style,
+            "notForOfficialDocument": True,
+            "identityGuard": True,
+            "gateVersion": "social_photo_quality_v1_warning_only",
+        }
+        if composition_check.get("status") == "warning":
+            warnings.append(_issue("SOCIAL_PHOTO_COMPOSITION_WARNING", "Social photo composition needs review: single centered head-and-shoulders framing was not confidently verified.", "warning", "composition"))
+        elif composition_check.get("status") == "failed":
+            errors.append(_issue("SOCIAL_PHOTO_COMPOSITION_FAILED", "Social photo composition failed the conservative gate.", "error", "composition"))
+        if realism_check.get("status") == "warning":
+            warnings.append(_issue("SOCIAL_PHOTO_REALISM_WARNING", "Social photo realism needs review: lightweight heuristics found low texture/color variety.", "warning", "realism"))
+    else:
+        checks["composition"] = {
+            "targetDimensions": {"width": target_width, "height": target_height},
+            "matchesFreeCoreSpec": bool(checks.get("dimensions", {}).get("match")),
+            "source": "free_core_spec_metadata",
+        }
 
-    return _finalize_report(checks, warnings, errors, usable_path, free_result, core_quality_report)
+    return _finalize_report(checks, warnings, errors, usable_path, free_result, core_quality_report, warning_only_floor=(mode == "social_photo"))
 
 
 def _finalize_report(
@@ -332,8 +434,11 @@ def _finalize_report(
     usable_path: Path | None,
     free_result: dict[str, Any] | None,
     core_quality_report: dict[str, Any] | None,
+    warning_only_floor: bool = False,
 ) -> dict[str, Any]:
     score = _score_from_issues(errors, warnings)
+    if warning_only_floor and not errors:
+        score = max(score, 70)
     passed = not errors and score >= 70
     fallback_reason = None if passed else (errors[0]["code"] if errors else "AI_PRO_QUALITY_SCORE_LOW")
     return {

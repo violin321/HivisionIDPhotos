@@ -50,6 +50,14 @@ def _match_aspect_size(target_spec: dict[str, Any] | None) -> str | None:
     return min(_PROVIDER_SIZES, key=lambda item: abs(item[1] - target_ratio))[0]
 
 
+def _provider_aspect_ratio(size: str) -> float | None:
+    normalized = _normalize_image_size(size)
+    if not normalized or normalized == "auto" or "x" not in normalized:
+        return None
+    width, height = normalized.split("x", 1)
+    return round(int(width) / int(height), 6) if int(height) else None
+
+
 @dataclass(frozen=True)
 class AIProEngineConfig:
     provider: str = "mock"
@@ -99,11 +107,37 @@ class AIProEngine:
         self.config = config or AIProEngineConfig.from_env()
 
     def run_blue_formal_id_photo(self, *, input_path: Path, output_dir: Path, final_prompt: str, template_id: str, template_version: str, provider_size: str | None = None, target_spec: dict[str, Any] | None = None) -> AIProEngineResult:
+        return self.run_image_edit(
+            input_path=input_path,
+            output_dir=output_dir,
+            final_prompt=final_prompt,
+            template_id=template_id,
+            template_version=template_version,
+            mode="ai_blue_formal_id_photo",
+            output_filename="ai_blue_formal_id_photo.png",
+            provider_size=provider_size,
+            target_spec=target_spec,
+        )
+
+    def run_social_photo(self, *, input_path: Path, output_dir: Path, final_prompt: str, template_id: str, template_version: str, provider_size: str | None = None, target_spec: dict[str, Any] | None = None) -> AIProEngineResult:
+        return self.run_image_edit(
+            input_path=input_path,
+            output_dir=output_dir,
+            final_prompt=final_prompt,
+            template_id=template_id,
+            template_version=template_version,
+            mode="social_photo",
+            output_filename=f"social_photo_{template_id}.png",
+            provider_size=provider_size,
+            target_spec=target_spec or {"width": 1024, "height": 1024, "dpi": 300},
+        )
+
+    def run_image_edit(self, *, input_path: Path, output_dir: Path, final_prompt: str, template_id: str, template_version: str, mode: str, output_filename: str, provider_size: str | None = None, target_spec: dict[str, Any] | None = None) -> AIProEngineResult:
         started = time.time()
         prompt_hash = hashlib.sha256(final_prompt.encode("utf-8")).hexdigest()[:16]
-        resolved_provider_size = self.resolve_provider_size(provider_size=provider_size, target_spec=target_spec)
+        resolved_provider_size = self.resolve_provider_size(provider_size=provider_size, target_spec=target_spec, mode=mode)
         base_metadata: dict[str, Any] = {
-            "mode": "ai_blue_formal_id_photo",
+            "mode": mode,
             "provider": self.config.provider if self.config.configured else "mock",
             "providerStatus": "configured" if self.config.configured else "no_credentials",
             "model": self.config.model,
@@ -115,6 +149,7 @@ class AIProEngine:
             "finalPromptHash": prompt_hash,
             "providerSizePolicy": self.config.image_size_policy,
             "providerSizeRequested": resolved_provider_size,
+            "providerAspectRatioRequested": _provider_aspect_ratio(resolved_provider_size),
         }
         output_dir.mkdir(parents=True, exist_ok=True)
         if not self.config.configured:
@@ -125,7 +160,7 @@ class AIProEngine:
         for attempt in range(self.config.retry_count + 1):
             try:
                 image_b64 = self._call_provider(input_path=input_path, prompt=final_prompt, provider_size=resolved_provider_size)
-                output_path = output_dir / "ai_blue_formal_id_photo.png"
+                output_path = output_dir / output_filename
                 output_path.write_bytes(base64.b64decode(self._strip_data_url(image_b64)))
                 output_dimensions = self._image_dimensions(output_path)
                 if output_dimensions:
@@ -149,12 +184,17 @@ class AIProEngine:
         base_metadata.update({"providerStatus": "error", "fallback": True, "errorCode": last_error or "PROVIDER_ERROR", "durationMs": int((time.time() - started) * 1000)})
         return AIProEngineResult(status="fallback", image_path=None, metadata=base_metadata)
 
-    def resolve_provider_size(self, *, provider_size: str | None = None, target_spec: dict[str, Any] | None = None) -> str:
+    def resolve_provider_size(self, *, provider_size: str | None = None, target_spec: dict[str, Any] | None = None, mode: str | None = None) -> str:
         explicit_size = _normalize_image_size(provider_size or "")
         if explicit_size:
             return explicit_size
         if self.config.image_size and self.config.image_size != "auto":
             return self.config.image_size
+        # social_photo has a product-level 1:1 output contract; even with the
+        # global provider-size policy left at safe default "auto", request the
+        # nearest square provider size. Keep ID-photo default unchanged.
+        if mode == "social_photo":
+            return _match_aspect_size(target_spec or {"width": 1024, "height": 1024}) or "1024x1024"
         if self.config.image_size_policy == "match-aspect":
             return _match_aspect_size(target_spec) or "auto"
         return "auto"
