@@ -32,6 +32,7 @@ from hivision.plugin.ai_pro import AIProEngine
 from hivision.plugin.ai_pro.quality import evaluate_ai_pro_quality
 from hivision.plugin.ai_pro.prompts import (
     DEFAULT_PROMPT_VERSION as AI_PRO_DEFAULT_PROMPT_VERSION,
+    SOCIAL_PHOTO_STYLES,
     SUPPORTED_MODES as AI_PRO_SUPPORTED_MODES,
     build_ai_pro_prompt,
     flatten_prompt_templates,
@@ -1102,15 +1103,27 @@ def make_ai_preview_from_official(official_image: np.ndarray, output_path: Path,
 
 
 def normalize_ai_pro_request(ai_pro: Any) -> dict[str, Any]:
+    raw_params = dict(ai_pro.promptParams or {})
     requested_modes = [str(mode) for mode in (ai_pro.modes or []) if str(mode) in AI_PRO_SUPPORTED_MODES]
     if ai_pro.enabled:
         requested_modes = [requested_modes[0] if requested_modes else "ai_blue_formal_id_photo"]
     else:
         requested_modes = []
+    if requested_modes and requested_modes[0] == "social_photo":
+        forbidden_prompt_keys = {"prompt", "customPrompt", "custom_prompt", "freePrompt", "free_prompt"}
+        present_forbidden = sorted(key for key in forbidden_prompt_keys if raw_params.get(key))
+        if present_forbidden:
+            raise HTTPException(status_code=400, detail=error_detail("SOCIAL_PHOTO_CUSTOM_PROMPT_UNSUPPORTED", "social_photo only supports controlled socialStyle presets; custom/free prompts are not accepted.", retryable=False))
+        social_style = str(raw_params.get("socialStyle") or "").strip()
+        if social_style not in SOCIAL_PHOTO_STYLES:
+            raise HTTPException(status_code=400, detail=error_detail("UNSUPPORTED_SOCIAL_STYLE", f"Unsupported socialStyle '{social_style}'. Supported values: {', '.join(sorted(SOCIAL_PHOTO_STYLES))}.", retryable=False))
+        raw_params = {key: value for key, value in raw_params.items() if key not in forbidden_prompt_keys}
+        raw_params["socialStyle"] = social_style
+        raw_params["outputRatio"] = str(raw_params.get("outputRatio") or "1:1")
     return {
         "enabled": bool(ai_pro.enabled),
         "modes": requested_modes,
-        "promptParams": dict(ai_pro.promptParams or {}),
+        "promptParams": raw_params,
         "consentAccepted": bool(ai_pro.consentAccepted),
     }
 
@@ -1173,6 +1186,19 @@ def _ai_pro_base_metadata(mode: str, template: dict[str, Any], ai_pro: dict[str,
             "specProfile": spec_context["specProfile"],
             "qualityRules": spec_context["qualityRules"],
         })
+    if mode == "social_photo":
+        params = ai_pro.get("promptParams", {})
+        metadata.update({
+            "domain": "social_photo",
+            "socialStyle": params.get("socialStyle") or template.get("id"),
+            "outputRatio": params.get("outputRatio") or "1:1",
+            "notForOfficialDocument": True,
+            "officialUse": False,
+            "identityPreservation": True,
+            "realistic": True,
+            "noFaceReshaping": True,
+            "noAgeGenderChange": True,
+        })
     if prompt_metadata:
         metadata.update(prompt_metadata)
     metadata.update({
@@ -1214,7 +1240,7 @@ def build_ai_pro_mock_results(task_id: str, free_result: dict[str, Any] | None, 
     spec_context = resolve_ai_pro_spec_context(template_id, task_options, ai_pro)
     for mode in ai_pro.get("modes", []):
         status_info = (mode_status or {}).get(mode, {})
-        resolution = resolve_prompt_template(mode, (ai_pro.get("promptParams") or {}).get("promptVersion"))
+        resolution = resolve_prompt_template(mode, (ai_pro.get("promptParams") or {}).get("promptVersion"), ai_pro.get("promptParams") or {})
         template = resolution.template
         built_prompt = build_ai_pro_prompt(mode=mode, ai_pro=ai_pro, template=template, spec_context=spec_context, requested_version=resolution.prompt_version, fallback_reason=resolution.fallback_reason)
         metadata = _ai_pro_base_metadata(
@@ -1249,7 +1275,7 @@ def build_ai_pro_mock_results(task_id: str, free_result: dict[str, Any] | None, 
             "isPaidFeature": True,
             "fallbackToFree": is_quality_fallback,
             "qualityGate": {"status": metadata.get("qualityGateStatus"), "passed": False if is_quality_fallback else None, "fallbackReason": metadata.get("fallbackReason") or metadata.get("errorCode")},
-            "qualityReport": {"source": "core_quality_report", "corePassed": bool((quality_report or {}).get("passed")), "mock": True},
+            "qualityReport": {"source": "core_quality_report", "corePassed": bool((quality_report or {}).get("passed")), "mock": True, **({"mode": "social_photo", "style": metadata.get("socialStyle"), "notForOfficialDocument": True} if resolution.mode == "social_photo" else {})},
             "promptMetadata": metadata,
             "mock": True,
         })
@@ -1264,7 +1290,7 @@ def build_ai_pro_results(task_id: str, result_dir: Path, ai_pro: dict[str, Any],
     results: list[dict[str, Any]] = []
     stage_modes: dict[str, str] = {}
     for mode in ai_pro.get("modes", []):
-        resolution = resolve_prompt_template(mode, (ai_pro.get("promptParams") or {}).get("promptVersion"))
+        resolution = resolve_prompt_template(mode, (ai_pro.get("promptParams") or {}).get("promptVersion"), ai_pro.get("promptParams") or {})
         template = resolution.template
         if resolution.mode != "ai_blue_formal_id_photo":
             mock_result = build_ai_pro_mock_results(task_id, free_result, {**ai_pro, "modes": [mode]}, quality_report, template_id=template_id, options=task_options)[0]
