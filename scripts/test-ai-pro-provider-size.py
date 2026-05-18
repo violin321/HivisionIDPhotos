@@ -72,6 +72,20 @@ def test_match_aspect_policy_selects_portrait_provider_size() -> None:
     )
 
 
+def test_social_photo_defaults_to_square_provider_size_without_changing_id_photo_default() -> None:
+    config = AIProEngineConfig(provider="metapi", api_base="http://provider.test/v1", api_key="key", image_size="auto", image_size_policy="auto")
+    engine = AIProEngine(config)
+
+    assert_true(
+        engine.resolve_provider_size(target_spec={"width": 295, "height": 413}) == "auto",
+        "ID-photo default should stay auto unless match-aspect is enabled",
+    )
+    assert_true(
+        engine.resolve_provider_size(target_spec={"width": 1024, "height": 1024}, mode="social_photo") == "1024x1024",
+        "social_photo should request the nearest square provider size by default",
+    )
+
+
 def test_metadata_contains_provider_size_requested_without_real_provider() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -91,6 +105,27 @@ def test_metadata_contains_provider_size_requested_without_real_provider() -> No
     assert_true(result.status == "no_credentials", "mock/no credentials path should not call provider")
     assert_true(result.metadata["providerSizeRequested"] == "auto", "metadata should include requested provider size")
     assert_true(result.metadata["providerSizePolicy"] == "auto", "metadata should include provider size policy")
+
+
+def test_social_photo_metadata_contains_square_provider_size_without_real_provider() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        input_path = root / "input.png"
+        Image.new("RGB", (295, 413), (255, 255, 255)).save(input_path)
+        engine = AIProEngine(AIProEngineConfig())
+
+        result = engine.run_social_photo(
+            input_path=input_path,
+            output_dir=root,
+            final_prompt="test social prompt",
+            template_id="professional_social",
+            template_version="v1",
+            target_spec={"width": 1024, "height": 1024},
+        )
+
+    assert_true(result.status == "no_credentials", "mock/no credentials path should not call provider")
+    assert_true(result.metadata["providerSizeRequested"] == "1024x1024", "social_photo metadata should include square provider size")
+    assert_true(result.metadata["providerAspectRatioRequested"] == 1.0, "social_photo metadata should expose requested square aspect ratio")
 
 
 def test_metadata_contains_provider_output_size_with_mocked_provider() -> None:
@@ -129,7 +164,9 @@ def main() -> None:
     test_default_provider_size_is_auto()
     test_explicit_provider_size_overrides_request()
     test_match_aspect_policy_selects_portrait_provider_size()
+    test_social_photo_defaults_to_square_provider_size_without_changing_id_photo_default()
     test_metadata_contains_provider_size_requested_without_real_provider()
+    test_social_photo_metadata_contains_square_provider_size_without_real_provider()
     test_metadata_contains_provider_output_size_with_mocked_provider()
     print("AI Pro provider size tests passed")
 
