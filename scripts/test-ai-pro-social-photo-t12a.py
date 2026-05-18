@@ -40,8 +40,10 @@ def test_professional_social_valid() -> None:
     prompt = built.prompt.lower()
     assert_true(resolution.mode == "social_photo", "mode should resolve to social_photo")
     assert_true(resolution.prompt_template_id == "professional_social", "professional style should select professional template")
-    for required in ("identity", "realistic", "do not reshape", "age", "gender", "not an official id photo"):
+    for required in ("identity", "realistic", "do not reshape", "do not redraw", "preserve exact facial geometry", "age", "gender", "not an official id photo"):
         assert_true(required in prompt, f"prompt should include guard phrase {required!r}")
+    for risky in ("studio portrait", "executive headshot"):
+        assert_true(risky not in prompt, f"social prompt should avoid heavy redraw cue {risky!r}")
 
 
 def test_friendly_social_valid() -> None:

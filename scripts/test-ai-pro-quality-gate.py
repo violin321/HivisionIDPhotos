@@ -140,6 +140,24 @@ def test_identity_geometry_fails_for_obvious_face_box_drift() -> None:
     assert_true(check["sizeRatioDelta"] > check["sizeRatioThresholds"]["fail"] or check["centerDelta"]["distance"] > check["centerDelta"]["failThreshold"], "failed guard should expose failing metric")
 
 
+def test_social_identity_profile_allows_square_crop_scale_delta_with_audit() -> None:
+    check = compare_identity_geometry(
+        source_rectangle=[90, 100, 110, 140],
+        source_shape=(413, 295, 3),
+        ai_rectangle=[350, 325, 360, 460],
+        ai_shape=(1024, 1024, 3),
+        center_warn_threshold=quality_module.IDENTITY_SOCIAL_CENTER_DELTA_WARN_THRESHOLD,
+        center_fail_threshold=quality_module.IDENTITY_SOCIAL_CENTER_DELTA_FAIL_THRESHOLD,
+        size_warn_threshold=quality_module.IDENTITY_SOCIAL_SIZE_RATIO_DELTA_WARN_THRESHOLD,
+        size_fail_threshold=quality_module.IDENTITY_SOCIAL_SIZE_RATIO_DELTA_FAIL_THRESHOLD,
+        profile="social_photo_square_vs_id_source",
+    )
+    assert_true(check["status"] == "warning", "square social crop scale delta should be warning, not fallback")
+    assert_true(check["profile"] == "social_photo_square_vs_id_source", "profile should be auditable")
+    assert_true(check["sourceImageDimensions"] == {"width": 295, "height": 413}, "source dimensions should be included")
+    assert_true(check["aiImageDimensions"] == {"width": 1024, "height": 1024}, "AI dimensions should be included")
+
+
 def test_identity_check_unavailable_warns_not_fails() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -236,6 +254,7 @@ def main() -> None:
     test_identity_geometry_passes_for_small_face_box_changes()
     test_identity_geometry_warns_for_moderate_face_box_drift()
     test_identity_geometry_fails_for_obvious_face_box_drift()
+    test_social_identity_profile_allows_square_crop_scale_delta_with_audit()
     test_identity_check_unavailable_warns_not_fails()
     test_identity_drift_failure_marks_quality_fallback()
     test_fallback_result_metadata_contains_quality_status()

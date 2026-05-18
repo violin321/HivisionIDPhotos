@@ -150,7 +150,11 @@ def test_social_photo_real_provider_path_uses_square_size_and_quality_gate() -> 
     assert_true(result["promptMetadata"]["providerSizeRequested"] == "1024x1024", "metadata should expose requested provider size", result)
     assert_true(result["promptMetadata"]["providerAspectRatio"] == 1.0, "metadata should expose used provider aspect ratio", result)
     assert_true(result["qualityReport"]["notForOfficialDocument"] is True, "social output should retain notForOfficialDocument", result)
+    identity = result["aiQualityReport"]["checks"]["identity"]
     assert_true(result["aiQualityReport"]["checks"]["socialPhoto"]["identityGuard"] is True, "social quality report should retain identity guard", result)
+    assert_true(identity["profile"] == "social_photo_square_vs_id_source", "social identity audit should expose square-vs-ID profile", result)
+    assert_true(identity["thresholds"]["centerFail"] == 0.16, "social identity center threshold should be auditable even when detector is unavailable", result)
+    assert_true(identity["thresholds"]["sizeRatioFail"] == 0.75, "social identity size threshold should be auditable even when detector is unavailable", result)
 
 
 def main() -> None:

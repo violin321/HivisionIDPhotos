@@ -16,6 +16,10 @@ IDENTITY_CENTER_DELTA_WARN_THRESHOLD = 0.07
 IDENTITY_CENTER_DELTA_FAIL_THRESHOLD = 0.12
 IDENTITY_SIZE_RATIO_DELTA_WARN_THRESHOLD = 0.18
 IDENTITY_SIZE_RATIO_DELTA_FAIL_THRESHOLD = 0.30
+IDENTITY_SOCIAL_CENTER_DELTA_WARN_THRESHOLD = 0.09
+IDENTITY_SOCIAL_CENTER_DELTA_FAIL_THRESHOLD = 0.16
+IDENTITY_SOCIAL_SIZE_RATIO_DELTA_WARN_THRESHOLD = 0.35
+IDENTITY_SOCIAL_SIZE_RATIO_DELTA_FAIL_THRESHOLD = 0.75
 SOCIAL_PHOTO_COMPOSITION_CENTER_WARN_THRESHOLD = 0.12
 SOCIAL_PHOTO_COMPOSITION_FACE_WIDTH_MIN = 0.18
 SOCIAL_PHOTO_COMPOSITION_FACE_WIDTH_MAX = 0.68
@@ -93,6 +97,11 @@ def compare_identity_geometry(
     source_shape: tuple[int, ...],
     ai_rectangle: list[int],
     ai_shape: tuple[int, ...],
+    center_warn_threshold: float = IDENTITY_CENTER_DELTA_WARN_THRESHOLD,
+    center_fail_threshold: float = IDENTITY_CENTER_DELTA_FAIL_THRESHOLD,
+    size_warn_threshold: float = IDENTITY_SIZE_RATIO_DELTA_WARN_THRESHOLD,
+    size_fail_threshold: float = IDENTITY_SIZE_RATIO_DELTA_FAIL_THRESHOLD,
+    profile: str = "official_id_photo",
 ) -> dict[str, Any]:
     """Compare face-box geometry using normalized, explainable metrics."""
 
@@ -109,9 +118,9 @@ def compare_identity_geometry(
         size_ratio_delta = 0.0 if ai_area_ratio == 0 else 1.0
 
     status = "passed"
-    if center_distance > IDENTITY_CENTER_DELTA_FAIL_THRESHOLD or size_ratio_delta > IDENTITY_SIZE_RATIO_DELTA_FAIL_THRESHOLD:
+    if center_distance > center_fail_threshold or size_ratio_delta > size_fail_threshold:
         status = "failed"
-    elif center_distance > IDENTITY_CENTER_DELTA_WARN_THRESHOLD or size_ratio_delta > IDENTITY_SIZE_RATIO_DELTA_WARN_THRESHOLD:
+    elif center_distance > center_warn_threshold or size_ratio_delta > size_warn_threshold:
         status = "warning"
 
     return {
@@ -121,14 +130,17 @@ def compare_identity_geometry(
             "x": round(center_dx, 4),
             "y": round(center_dy, 4),
             "distance": round(center_distance, 4),
-            "warnThreshold": IDENTITY_CENTER_DELTA_WARN_THRESHOLD,
-            "failThreshold": IDENTITY_CENTER_DELTA_FAIL_THRESHOLD,
+            "warnThreshold": center_warn_threshold,
+            "failThreshold": center_fail_threshold,
         },
         "sizeRatioDelta": round(size_ratio_delta, 4),
         "sizeRatioThresholds": {
-            "warn": IDENTITY_SIZE_RATIO_DELTA_WARN_THRESHOLD,
-            "fail": IDENTITY_SIZE_RATIO_DELTA_FAIL_THRESHOLD,
+            "warn": size_warn_threshold,
+            "fail": size_fail_threshold,
         },
+        "profile": profile,
+        "sourceImageDimensions": {"width": int(source_shape[1]), "height": int(source_shape[0])},
+        "aiImageDimensions": {"width": int(ai_shape[1]), "height": int(ai_shape[0])},
         "status": status,
     }
 
@@ -214,7 +226,8 @@ def _evaluate_social_realism(image_rgb: np.ndarray) -> dict[str, Any]:
     }
 
 
-def _evaluate_identity_check(source_rgb: np.ndarray | None, ai_rgb: np.ndarray) -> dict[str, Any]:
+def _evaluate_identity_check(source_rgb: np.ndarray | None, ai_rgb: np.ndarray, *, mode: str = "ai_blue_formal_id_photo") -> dict[str, Any]:
+    is_social_photo = mode == "social_photo"
     check: dict[str, Any] = {
         "detector": "opencv_haar",
         "status": "unavailable",
@@ -222,6 +235,13 @@ def _evaluate_identity_check(source_rgb: np.ndarray | None, ai_rgb: np.ndarray) 
         "aiFace": None,
         "centerDelta": None,
         "sizeRatioDelta": None,
+        "profile": "social_photo_square_vs_id_source" if is_social_photo else "official_id_photo",
+        "thresholds": {
+            "centerWarn": IDENTITY_SOCIAL_CENTER_DELTA_WARN_THRESHOLD if is_social_photo else IDENTITY_CENTER_DELTA_WARN_THRESHOLD,
+            "centerFail": IDENTITY_SOCIAL_CENTER_DELTA_FAIL_THRESHOLD if is_social_photo else IDENTITY_CENTER_DELTA_FAIL_THRESHOLD,
+            "sizeRatioWarn": IDENTITY_SOCIAL_SIZE_RATIO_DELTA_WARN_THRESHOLD if is_social_photo else IDENTITY_SIZE_RATIO_DELTA_WARN_THRESHOLD,
+            "sizeRatioFail": IDENTITY_SOCIAL_SIZE_RATIO_DELTA_FAIL_THRESHOLD if is_social_photo else IDENTITY_SIZE_RATIO_DELTA_FAIL_THRESHOLD,
+        },
     }
     if source_rgb is None:
         check.update({"detector": "unavailable", "reason": "source_image_unavailable"})
@@ -249,6 +269,11 @@ def _evaluate_identity_check(source_rgb: np.ndarray | None, ai_rgb: np.ndarray) 
         source_shape=source_rgb.shape,
         ai_rectangle=ai_rectangles[0],
         ai_shape=ai_rgb.shape,
+        center_warn_threshold=IDENTITY_SOCIAL_CENTER_DELTA_WARN_THRESHOLD if is_social_photo else IDENTITY_CENTER_DELTA_WARN_THRESHOLD,
+        center_fail_threshold=IDENTITY_SOCIAL_CENTER_DELTA_FAIL_THRESHOLD if is_social_photo else IDENTITY_CENTER_DELTA_FAIL_THRESHOLD,
+        size_warn_threshold=IDENTITY_SOCIAL_SIZE_RATIO_DELTA_WARN_THRESHOLD if is_social_photo else IDENTITY_SIZE_RATIO_DELTA_WARN_THRESHOLD,
+        size_fail_threshold=IDENTITY_SOCIAL_SIZE_RATIO_DELTA_FAIL_THRESHOLD if is_social_photo else IDENTITY_SIZE_RATIO_DELTA_FAIL_THRESHOLD,
+        profile="social_photo_square_vs_id_source" if is_social_photo else "official_id_photo",
     )
     check.update(geometry)
     return check
@@ -391,7 +416,7 @@ def evaluate_ai_pro_quality(
     elif face_count != 1:
         warnings.append(_issue("AI_PRO_FACE_COUNT_REVIEW", "AI Pro output did not produce a confident single-face detector result; manual review is required.", "warning", "face.count"))
 
-    identity_check = _evaluate_identity_check(_read_rgb_image(source_image_path), image_rgb)
+    identity_check = _evaluate_identity_check(_read_rgb_image(source_image_path), image_rgb, mode=mode)
     checks["identity"] = identity_check
     if identity_check.get("status") == "failed":
         errors.append(_issue("AI_PRO_IDENTITY_DRIFT_FAILED", "AI Pro may have changed face position or structure too much, so Free Core fallback is used.", "error", "identity"))
@@ -409,7 +434,8 @@ def evaluate_ai_pro_quality(
             "style": social_style,
             "notForOfficialDocument": True,
             "identityGuard": True,
-            "gateVersion": "social_photo_quality_v1_warning_only",
+            "gateVersion": "social_photo_quality_v2_identity_audit",
+            "identityProfile": identity_check.get("profile"),
         }
         if composition_check.get("status") == "warning":
             warnings.append(_issue("SOCIAL_PHOTO_COMPOSITION_WARNING", "Social photo composition needs review: single centered head-and-shoulders framing was not confidently verified.", "warning", "composition"))

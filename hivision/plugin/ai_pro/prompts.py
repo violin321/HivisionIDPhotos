@@ -246,18 +246,21 @@ def build_ai_pro_prompt(
         social_style = str(params.get("socialStyle") or resolved_template.get("id") or "professional_social")
         output_ratio = str(params.get("outputRatio") or "1:1")
         style_direction = (
-            "professional, trustworthy, modern work-network avatar"
+            "professional profile-photo polish with a plain, non-distracting background"
             if social_style == "professional_social"
-            else "friendly, approachable, natural social avatar"
+            else "friendly profile-photo polish with a warm, simple background"
         )
         prompt_parts = [
-            f"Create a narrow-scope social_photo from the provided existing ID photo input using the {social_style} preset.",
+            f"Perform a conservative social_photo edit of the provided existing ID photo input using the {social_style} preset.",
             "This is for informal social/profile use only and is not an official ID photo or official document output.",
-            "Preserve the same person's identity, facial features, face shape, age, gender presentation, hairstyle, expression, and natural proportions.",
-            "Do not reshape the face, do not change age or gender, do not make the person look like someone else, and do not apply exaggerated beautification.",
-            "Keep the result realistic and photo-like, with conservative lighting and cleanup only.",
+            "Do not redraw, regenerate, reinterpret, or replace the face. Treat the original face pixels and facial geometry as the primary source of truth.",
+            "Preserve exact facial geometry: eyes, nose, mouth, jawline, cheeks, ears, hairline, skin tone, age, gender presentation, expression, and natural proportions must remain unchanged.",
+            "Do not reshape the face; avoid beautification, smoothing that changes identity, makeup changes, age changes, expression changes, or any likeness drift.",
+            "Only make minimal edits outside identity-critical facial structure: square crop/padding if needed, simple background cleanup, conservative lighting normalization, mild color balance, and light artifact cleanup.",
+            "If uncertain, prefer the smallest possible edit and keep the output close to the original image rather than making a stylized or studio-like portrait.",
+            "Keep the result realistic and photo-like; do not create a new portrait, headshot, or studio rendering.",
             f"Style direction: {style_direction}.",
-            f"Output ratio: {output_ratio}; keep a centered head-and-shoulders composition suitable for a light social avatar.",
+            f"Output ratio: {output_ratio}; keep a centered head-and-shoulders composition suitable for a light social avatar without changing face scale more than necessary.",
             f"Selected controlled params: {{'socialStyle': {social_style!r}, 'outputRatio': {output_ratio!r}}}.",
         ]
     else:
