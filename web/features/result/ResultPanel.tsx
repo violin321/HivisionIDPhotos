@@ -83,6 +83,16 @@ function GenerationProgress({ kind }: { kind: GenerationKind }) {
   );
 }
 
+function readMetaFlag(item: AiProResult, key: string): unknown {
+  return item.promptMetadata?.[key] ?? item.qualityReport?.[key] ?? item.aiQualityReport?.checks?.[key];
+}
+
+function socialStyleLabel(value: unknown) {
+  if (value === 'friendly_social') return 'Friendly · friendly_social';
+  if (value === 'professional_social') return 'Professional · professional_social';
+  return String(value ?? '—');
+}
+
 function buildProResultView(item: AiProResult): ProResultView {
   const providerStatus = String(item.promptMetadata?.providerStatus ?? item.status);
   const qualityGateStatus = String(item.promptMetadata?.qualityGateStatus ?? item.qualityGate?.status ?? 'not_run');
@@ -90,13 +100,17 @@ function buildProResultView(item: AiProResult): ProResultView {
   const fallbackToFree = item.fallbackToFree === true || item.promptMetadata?.fallbackToFree === true || qualityGateStatus === 'quality_failed';
   const isPassed = qualityGateStatus === 'passed';
   const badge = fallbackToFree ? 'fallback_to_free' : isPassed ? 'quality_passed' : providerStatus;
-  const fallbackReason = String(item.aiQualityReport?.fallbackReason ?? item.qualityGate?.fallbackReason ?? item.promptMetadata?.fallbackReason ?? '');
+  const fallbackReason = String(item.aiQualityReport?.fallbackReason ?? item.qualityGate?.fallbackReason ?? item.promptMetadata?.fallbackReason ?? item.promptMetadata?.errorCode ?? '');
   const warning = fallbackToFree
     ? fallbackReason === 'AI_PRO_ASPECT_RATIO_MISMATCH'
       ? 'AI Pro 输出比例不符合证件照规格，已回退 Free Core。'
-      : 'AI Pro 未通过质量门，已回退 Free Core。'
+      : item.mode === 'social_photo'
+        ? 'Social Photo Beta 当前使用 Free Core fallback；仅作社交头像候选，不适用于官方证件办理。'
+        : 'AI Pro 未通过质量门，已回退 Free Core。'
     : isPassed
-      ? 'AI Pro 候选通过质量门，但仍需按提交平台要求人工核验。'
+      ? item.mode === 'social_photo'
+        ? 'Social Photo Beta 候选通过质量门；仅用于社交平台头像，不能用于官方证件办理。'
+        : 'AI Pro 候选通过质量门，但仍需按提交平台要求人工核验。'
       : providerStatus === 'no_credentials'
         ? 'AI provider 未配置：当前展示 Free Core fallback，不影响官方结果。'
         : 'AI Pro 候选结果需人工核验。';
@@ -116,7 +130,10 @@ function buildProResultView(item: AiProResult): ProResultView {
 
 
 function aiProFallbackCopy(result: ProResultView): string {
-  const reason = String(result.item.aiQualityReport?.fallbackReason ?? result.item.qualityGate?.fallbackReason ?? result.item.promptMetadata?.fallbackReason ?? '');
+  const reason = String(result.item.aiQualityReport?.fallbackReason ?? result.item.qualityGate?.fallbackReason ?? result.item.promptMetadata?.fallbackReason ?? result.item.promptMetadata?.errorCode ?? '');
+  if (result.item.mode === 'social_photo') {
+    return `Social Photo Beta 当前展示 Free Core fallback${reason ? `（${reason}）` : ''}；该能力仅用于社交平台自然头像，不适用于官方证件办理。`;
+  }
   if (reason === 'AI_PRO_ASPECT_RATIO_MISMATCH') {
     return 'AI Pro 输出比例不符合证件照规格，已回退 Free Core；当前默认保留 Free Core 预览，AI Pro 下载不作为独立结果提供。';
   }
@@ -126,6 +143,7 @@ function aiProFallbackCopy(result: ProResultView): string {
 function resultTitle(item: AiProResult) {
   if (item.mode === 'ai_repair') return 'AI 精修';
   if (item.mode === 'ai_blue_formal_id_photo') return '证件照 AI 增强';
+  if (item.mode === 'social_photo') return 'Social Photo Beta';
   return '高端影棚肖像';
 }
 
@@ -137,6 +155,7 @@ export function ResultPanel({ task, template, selectedBackground, generationKind
   const proAvailable = Boolean(primaryProResult && !primaryProResult.fallbackToFree && primaryProResult.effectivePreviewUrl);
   const proFallback = Boolean(primaryProResult?.fallbackToFree);
   const proPassed = Boolean(primaryProResult?.isPassed && !primaryProResult.fallbackToFree);
+  const socialPhotoResult = primaryProResult?.item.mode === 'social_photo';
   const freePreviewUrl = task?.officialResult?.previewUrl ?? task?.freeResult?.previewUrl;
   const freeDownloadUrl = task?.officialResult?.downloadUrl ?? task?.freeResult?.downloadUrl;
   const freeSucceeded = task?.status === 'succeeded' && Boolean(freePreviewUrl || freeDownloadUrl);
@@ -174,8 +193,8 @@ export function ResultPanel({ task, template, selectedBackground, generationKind
   const activePreviewUrl = activeTab === 'pro' ? primaryProResult?.effectivePreviewUrl : freePreviewUrl;
   const activeDownloadUrl = activeTab === 'pro' ? primaryProResult?.effectiveDownloadUrl : freeDownloadUrl;
   const activeDownloadDisabled = activeTab === 'pro' ? !proAvailable || !activeDownloadUrl : !freeSucceeded || !freeDownloadUrl;
-  const activePreviewAlt = activeTab === 'pro' ? 'AI Pro 预览' : t('officialAlt');
-  const activeSource = activeTab === 'pro' ? 'AI Pro candidate' : freeSucceeded ? 'IDCreator / Free Core' : '—';
+  const activePreviewAlt = activeTab === 'pro' ? (socialPhotoResult ? 'Social Photo Beta 预览' : 'AI Pro 预览') : t('officialAlt');
+  const activeSource = activeTab === 'pro' ? (socialPhotoResult ? 'Social Photo Beta candidate' : 'AI Pro candidate') : freeSucceeded ? 'IDCreator / Free Core' : '—';
   const statusBadge = activeTab === 'pro' ? 'AI PRO' : freeSucceeded ? t('ready') : t('waiting');
   const pluginResults = [
     task?.layoutResult ? { key: 'layout', title: t('layoutResult'), copy: t('layoutResultCopy'), result: task.layoutResult } : null,
@@ -232,7 +251,7 @@ export function ResultPanel({ task, template, selectedBackground, generationKind
 
         <div className="flex flex-col justify-between">
           <div>
-            <p className="text-sm leading-6 text-slate">{activeTab === 'pro' ? 'AI Pro 是可选增值支路，用于保守增强、换装、模板或形象照；只在通过质量门后作为候选预览展示，不替代 Free Core 官方结果。' : 'Free Core 使用 IDCreator/Hivision 标准证照主链路，本地确定性处理，是正式、稳定、免费的官方结果；AI Pro 失败不会影响此结果。'}</p>
+            <p className="text-sm leading-6 text-slate">{activeTab === 'pro' ? (socialPhotoResult ? 'Social Photo Beta 生成适合社交平台使用的自然头像，不适用于官方证件办理；它不会替代 Free Core 官方证照结果。' : 'AI Pro 是可选增值支路，用于保守增强、换装、模板或形象照；只在通过质量门后作为候选预览展示，不替代 Free Core 官方结果。') : 'Free Core 使用 IDCreator/Hivision 标准证照主链路，本地确定性处理，是正式、稳定、免费的官方结果；AI Pro 失败不会影响此结果。'}</p>
             <dl className="mt-5 grid gap-3 text-sm sm:grid-cols-2">
               <div className="rounded-2xl border border-ink/10 bg-paper/60 p-3"><dt className="text-slate">{t('spec')}</dt><dd className="mt-1 font-semibold">{template?.label ?? '—'} · {template?.size ?? '—'}</dd></div>
               <div className="rounded-2xl border border-ink/10 bg-paper/60 p-3"><dt className="text-slate">{t('background')}</dt><dd className="mt-1 font-semibold">{t(backgroundLabelKeys[selectedBackground])}</dd></div>
@@ -254,13 +273,22 @@ export function ResultPanel({ task, template, selectedBackground, generationKind
             <div>
               <p className="font-semibold text-ink">AI Pro 质量门摘要 · {resultTitle(primaryProResult.item)}</p>
               <p className="text-xs text-slate">{primaryProResult.warning}</p>
+              {socialPhotoResult ? <p className="mt-1 text-xs font-semibold text-amber">生成适合社交平台使用的自然头像，不适用于官方证件办理。</p> : null}
             </div>
             <span className={`rounded-full border px-3 py-1 font-mono text-[10px] ${primaryProResult.fallbackToFree ? 'border-amber/35 text-amber' : 'border-measurement/35 text-measurement'}`}>{primaryProResult.badge}</span>
           </div>
           <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-3">
             <div className="rounded-xl border border-ink/10 bg-paper/55 px-3 py-2"><dt className="text-slate">providerStatus</dt><dd className="mt-1 font-mono text-ink">{primaryProResult.providerStatus}</dd></div>
             <div className="rounded-xl border border-ink/10 bg-paper/55 px-3 py-2"><dt className="text-slate">qualityGate</dt><dd className="mt-1 font-mono text-ink">{primaryProResult.qualityGateStatus}</dd></div>
-            <div className="rounded-xl border border-ink/10 bg-paper/55 px-3 py-2"><dt className="text-slate">result</dt><dd className="mt-1 font-mono text-ink">{primaryProResult.fallbackToFree ? 'Free Core fallback' : 'AI Pro candidate'}</dd></div>
+            <div className="rounded-xl border border-ink/10 bg-paper/55 px-3 py-2"><dt className="text-slate">result</dt><dd className="mt-1 font-mono text-ink">{primaryProResult.fallbackToFree ? 'Free Core fallback' : socialPhotoResult ? 'Social Photo candidate' : 'AI Pro candidate'}</dd></div>
+            <div className="rounded-xl border border-ink/10 bg-paper/55 px-3 py-2"><dt className="text-slate">fallbackUsed</dt><dd className="mt-1 font-mono text-ink">{primaryProResult.fallbackToFree || readMetaFlag(primaryProResult.item, 'fallback') === true ? 'yes' : 'no'}</dd></div>
+            <div className="rounded-xl border border-ink/10 bg-paper/55 px-3 py-2"><dt className="text-slate">fallbackReason</dt><dd className="mt-1 break-all font-mono text-ink">{String(primaryProResult.item.aiQualityReport?.fallbackReason ?? primaryProResult.item.qualityGate?.fallbackReason ?? primaryProResult.item.promptMetadata?.fallbackReason ?? primaryProResult.item.promptMetadata?.errorCode ?? '—')}</dd></div>
+            {socialPhotoResult ? (
+              <>
+                <div className="rounded-xl border border-ink/10 bg-paper/55 px-3 py-2"><dt className="text-slate">style</dt><dd className="mt-1 font-mono text-ink">{socialStyleLabel(readMetaFlag(primaryProResult.item, 'socialStyle') ?? readMetaFlag(primaryProResult.item, 'style'))}</dd></div>
+                <div className="rounded-xl border border-ink/10 bg-paper/55 px-3 py-2"><dt className="text-slate">notForOfficialDocument</dt><dd className="mt-1 font-mono text-ink">{readMetaFlag(primaryProResult.item, 'notForOfficialDocument') === true ? 'true' : '—'}</dd></div>
+              </>
+            ) : null}
             <div className="rounded-xl border border-ink/10 bg-paper/55 px-3 py-2"><dt className="text-slate">template</dt><dd className="mt-1 font-mono text-ink">{primaryProResult.item.promptTemplateId}@{primaryProResult.item.templateVersion}</dd></div>
             <div className="rounded-xl border border-ink/10 bg-paper/55 px-3 py-2"><dt className="text-slate">promptHash</dt><dd className="mt-1 break-all font-mono text-ink">{primaryProResult.promptHash}</dd></div>
             <div className="rounded-xl border border-ink/10 bg-paper/55 px-3 py-2"><dt className="text-slate">paid</dt><dd className="mt-1 font-mono text-ink">{primaryProResult.item.paid || primaryProResult.item.isPaidFeature ? 'Pro / 增值' : 'placeholder'}</dd></div>

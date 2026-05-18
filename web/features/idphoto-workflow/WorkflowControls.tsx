@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import type { AiProMode, BackgroundColor, IdPhotoTemplate, TaskOptions } from '../../lib/api-client';
+import type { AiProMode, BackgroundColor, IdPhotoTemplate, SocialStyle, TaskOptions } from '../../lib/api-client';
 import { usePreferences } from '../../lib/preferences';
 
 
@@ -50,10 +50,17 @@ const layoutPaperSizes = [
   { value: 'a4', label: 'A4 · 2479×3508' },
 ] as const;
 const AI_PRO_ID_PHOTO_MODE: AiProMode = 'ai_blue_formal_id_photo';
+const SOCIAL_PHOTO_MODE: AiProMode = 'social_photo';
+const SOCIAL_PHOTO_DEFAULT_STYLE: SocialStyle = 'professional_social';
 const aiProModes: Array<{ value: AiProMode; label: string; note: string; badge: string }> = [
-  { value: AI_PRO_ID_PHOTO_MODE, label: '证件照 AI 增强', note: '跟随当前规格与底色生成 AI Pro 候选；provider 可用时优先真实生成，否则 fallback。', badge: '证件照流程' },
+  { value: AI_PRO_ID_PHOTO_MODE, label: 'ID Photo / 证件照 AI 增强', note: '跟随当前规格与底色生成 AI Pro 候选；provider 可用时优先真实生成，否则 fallback。', badge: '证件照流程' },
+  { value: SOCIAL_PHOTO_MODE, label: 'Social Photo Beta', note: '生成适合社交平台使用的自然头像，不适用于官方证件办理。', badge: 'Beta · 非证件照' },
   { value: 'ai_repair', label: 'AI 精修', note: '仅做人像轻量修复预览，不改变证件照规格。', badge: '非规格入口' },
   { value: 'executive_headshot', label: '高端影棚肖像', note: '非正式证件照用途；当前作为影棚肖像候选，避免按证件照规格误用。', badge: '非证件照' },
+];
+const socialStyleOptions: Array<{ value: SocialStyle; label: string; note: string }> = [
+  { value: 'professional_social', label: 'Professional', note: '适合 LinkedIn / 简历 / 专业社交平台，克制自然。' },
+  { value: 'friendly_social', label: 'Friendly', note: '适合个人主页 / 社交头像，更亲和但保持真实身份。' },
 ];
 const templateCategories = ['all', 'common', 'exam', 'visa', 'credential'] as const;
 type TemplateCategory = (typeof templateCategories)[number];
@@ -241,6 +248,8 @@ export function WorkflowControls({
   const customBackgroundEnabled = Boolean(taskOptions.customBackgroundEnabled);
   const customRgb = currentCustomRgb(taskOptions);
   const aiProGenerating = Boolean(taskOptions.aiPro?.enabled && isWorking);
+  const currentAiProMode = (taskOptions.aiPro?.modes?.[0] ?? AI_PRO_ID_PHOTO_MODE) as AiProMode;
+  const socialPhotoSelected = currentAiProMode === SOCIAL_PHOTO_MODE;
   const updateCustomHex = (value: string) => {
     const normalized = normalizeHex(value);
     onTaskOptionsChange({
@@ -331,8 +340,10 @@ export function WorkflowControls({
                 onTaskOptionsChange({
                   aiPro: {
                     enabled,
-                    modes: enabled ? [((taskOptions.aiPro?.modes?.[0] ?? AI_PRO_ID_PHOTO_MODE) as AiProMode)] : [],
-                    promptParams: { ...(taskOptions.aiPro?.promptParams ?? { outfit: '深色西装/白衬衫', style: 'natural', retouchLevel: 'medium' }), backgroundColor: selectedBackground },
+                    modes: enabled ? [currentAiProMode] : [],
+                    promptParams: currentAiProMode === SOCIAL_PHOTO_MODE
+                      ? { socialStyle: ((taskOptions.aiPro?.promptParams?.socialStyle as SocialStyle | undefined) ?? SOCIAL_PHOTO_DEFAULT_STYLE), outputRatio: '1:1' }
+                      : { ...(taskOptions.aiPro?.promptParams ?? { outfit: '深色西装/白衬衫', style: 'natural', retouchLevel: 'medium' }), backgroundColor: selectedBackground },
                     consentAccepted: enabled ? Boolean(taskOptions.aiPro?.consentAccepted) : false,
                   },
                 });
@@ -346,10 +357,10 @@ export function WorkflowControls({
 
         {taskOptions.aiPro?.enabled ? (
           <div className="mt-4 space-y-4">
-            <fieldset className="grid gap-2 md:grid-cols-3">
+            <fieldset className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
               <legend className="sr-only">AI Pro 模式单选</legend>
               {aiProModes.map((mode) => {
-                const active = (taskOptions.aiPro?.modes?.[0] ?? AI_PRO_ID_PHOTO_MODE) === mode.value;
+                const active = currentAiProMode === mode.value;
                 return (
                   <label key={mode.value} className={`cursor-pointer rounded-2xl border p-3 text-sm transition ${active ? 'border-amber bg-amber/10' : 'border-ink/10 bg-porcelain/70'}`}>
                     <input
@@ -361,7 +372,9 @@ export function WorkflowControls({
                           aiPro: {
                             ...taskOptions.aiPro!,
                             modes: [mode.value],
-                            promptParams: { ...taskOptions.aiPro!.promptParams, backgroundColor: selectedBackground },
+                            promptParams: mode.value === SOCIAL_PHOTO_MODE
+                              ? { socialStyle: ((taskOptions.aiPro!.promptParams.socialStyle as SocialStyle | undefined) ?? SOCIAL_PHOTO_DEFAULT_STYLE), outputRatio: '1:1' }
+                              : { ...taskOptions.aiPro!.promptParams, backgroundColor: selectedBackground },
                           },
                         });
                       }}
@@ -374,15 +387,42 @@ export function WorkflowControls({
                 );
               })}
             </fieldset>
-            <div className="grid gap-3 md:grid-cols-3">
-              <input type="text" value={(taskOptions.aiPro.promptParams.outfit as string | undefined) ?? ''} onChange={(event) => onTaskOptionsChange({ aiPro: { ...taskOptions.aiPro!, promptParams: { ...taskOptions.aiPro!.promptParams, outfit: event.target.value } } })} placeholder="服装：深色西装/白衬衫" className="rounded-2xl border border-ink/10 bg-porcelain px-3 py-3 text-sm" />
-              <input type="text" value={(taskOptions.aiPro.promptParams.style as string | undefined) ?? ''} onChange={(event) => onTaskOptionsChange({ aiPro: { ...taskOptions.aiPro!, promptParams: { ...taskOptions.aiPro!.promptParams, style: event.target.value } } })} placeholder="风格：natural / studio" className="rounded-2xl border border-ink/10 bg-porcelain px-3 py-3 text-sm" />
-              <select value={(taskOptions.aiPro.promptParams.retouchLevel as string | undefined) ?? 'medium'} onChange={(event) => onTaskOptionsChange({ aiPro: { ...taskOptions.aiPro!, promptParams: { ...taskOptions.aiPro!.promptParams, retouchLevel: event.target.value } } })} className="rounded-2xl border border-ink/10 bg-porcelain px-3 py-3 text-sm">
-                <option value="low">低强度</option>
-                <option value="medium">中强度</option>
-                <option value="high">高强度</option>
-              </select>
-            </div>
+            {socialPhotoSelected ? (
+              <div className="rounded-2xl border border-amber/30 bg-amber/10 p-4">
+                <p className="font-semibold text-ink">Social Photo Beta 用途边界</p>
+                <p className="mt-1 text-xs leading-5 text-slate">生成适合社交平台使用的自然头像，不适用于官方证件办理。</p>
+                <fieldset className="mt-3 grid gap-2 sm:grid-cols-2">
+                  <legend className="sr-only">Social Photo style</legend>
+                  {socialStyleOptions.map((style) => {
+                    const active = ((taskOptions.aiPro!.promptParams.socialStyle as SocialStyle | undefined) ?? SOCIAL_PHOTO_DEFAULT_STYLE) === style.value;
+                    return (
+                      <label key={style.value} className={`cursor-pointer rounded-2xl border p-3 text-sm transition ${active ? 'border-amber bg-paper/80' : 'border-ink/10 bg-porcelain/70'}`}>
+                        <input
+                          type="radio"
+                          name="social-photo-style"
+                          checked={active}
+                          onChange={() => onTaskOptionsChange({ aiPro: { ...taskOptions.aiPro!, promptParams: { socialStyle: style.value, outputRatio: '1:1' } } })}
+                          className="mr-2 accent-amber"
+                        />
+                        <span className="font-semibold">{style.label}</span>
+                        <span className="mt-1 block text-xs leading-5 text-slate">{style.note}</span>
+                      </label>
+                    );
+                  })}
+                </fieldset>
+                <p className="mt-3 rounded-xl border border-dashed border-amber/35 bg-paper/60 px-3 py-2 text-[11px] leading-5 text-slate">请求仅发送受控 preset：mode=social_photo、promptParams.socialStyle、outputRatio=1:1；不开放自由 prompt。</p>
+              </div>
+            ) : (
+              <div className="grid gap-3 md:grid-cols-3">
+                <input type="text" value={(taskOptions.aiPro.promptParams.outfit as string | undefined) ?? ''} onChange={(event) => onTaskOptionsChange({ aiPro: { ...taskOptions.aiPro!, promptParams: { ...taskOptions.aiPro!.promptParams, outfit: event.target.value } } })} placeholder="服装：深色西装/白衬衫" className="rounded-2xl border border-ink/10 bg-porcelain px-3 py-3 text-sm" />
+                <input type="text" value={(taskOptions.aiPro.promptParams.style as string | undefined) ?? ''} onChange={(event) => onTaskOptionsChange({ aiPro: { ...taskOptions.aiPro!, promptParams: { ...taskOptions.aiPro!.promptParams, style: event.target.value } } })} placeholder="风格：natural / studio" className="rounded-2xl border border-ink/10 bg-porcelain px-3 py-3 text-sm" />
+                <select value={(taskOptions.aiPro.promptParams.retouchLevel as string | undefined) ?? 'medium'} onChange={(event) => onTaskOptionsChange({ aiPro: { ...taskOptions.aiPro!, promptParams: { ...taskOptions.aiPro!.promptParams, retouchLevel: event.target.value } } })} className="rounded-2xl border border-ink/10 bg-porcelain px-3 py-3 text-sm">
+                  <option value="low">低强度</option>
+                  <option value="medium">中强度</option>
+                  <option value="high">高强度</option>
+                </select>
+              </div>
+            )}
             <label className="flex items-start gap-2 rounded-2xl border border-dashed border-amber/35 bg-amber/5 px-3 py-3 text-xs leading-5 text-slate">
               <input type="checkbox" checked={Boolean(taskOptions.aiPro.consentAccepted)} onChange={(event) => onTaskOptionsChange({ aiPro: { ...taskOptions.aiPro!, consentAccepted: event.target.checked } })} className="mt-1 accent-amber" />
               我同意将图片用于 AI Pro 生成；若服务端配置了 provider，图片会提交到运行环境配置的第三方 AI 服务；否则使用 fallback。

@@ -19,6 +19,7 @@ import {
   type ProcessingTask,
   type TaskOptions,
   type UploadHandle,
+  type SocialStyle,
 } from '../lib/api-client';
 
 function StatusPill({ children }: { children: React.ReactNode }) {
@@ -333,6 +334,7 @@ export default function StudioShell({ username, onLogout }: { username?: string 
   async function handleCreateTask() {
     if (!upload) return;
     const normalizedAiPro = taskOptions.aiPro ?? { enabled: false, modes: [], promptParams: {}, consentAccepted: false };
+    const requestedAiProMode = normalizedAiPro.modes[0] ?? 'ai_blue_formal_id_photo';
     if (normalizedAiPro.enabled && !normalizedAiPro.consentAccepted) {
       setErrorMessage('请先勾选 AI Pro 同意授权/同意将图片用于 AI Pro 生成');
       return;
@@ -342,12 +344,17 @@ export default function StudioShell({ username, onLogout }: { username?: string 
     try {
       const aiProRequest = {
         ...normalizedAiPro,
-        modes: normalizedAiPro.enabled ? [normalizedAiPro.modes[0] ?? 'ai_blue_formal_id_photo'] : [],
-        promptParams: {
-          ...(normalizedAiPro.promptParams ?? {}),
-          backgroundColor: taskOptions.customBackgroundEnabled ? 'custom' : selectedBackground,
-          outputSpec: template ? `${template.width ?? 'auto'}x${template.height ?? 'auto'}@${template.dpi ?? 300}dpi` : selectedTemplate,
-        },
+        modes: normalizedAiPro.enabled ? [requestedAiProMode] : [],
+        promptParams: requestedAiProMode === 'social_photo'
+          ? {
+              socialStyle: ((normalizedAiPro.promptParams?.socialStyle as SocialStyle | undefined) ?? 'professional_social'),
+              outputRatio: '1:1',
+            }
+          : {
+              ...(normalizedAiPro.promptParams ?? {}),
+              backgroundColor: taskOptions.customBackgroundEnabled ? 'custom' : selectedBackground,
+              outputSpec: template ? `${template.width ?? 'auto'}x${template.height ?? 'auto'}@${template.dpi ?? 300}dpi` : selectedTemplate,
+            },
       };
       const nextTask = await createTask({
         uploadId: upload.uploadId,
