@@ -26,6 +26,7 @@ def redact_summary(result: dict[str, Any]) -> dict[str, Any]:
     metadata = result.get("promptMetadata") or {}
     ai_quality = result.get("aiQualityReport") or {}
     checks = ai_quality.get("checks") or {}
+    identity_check = checks.get("identity") or {}
     return {
         "style": metadata.get("socialStyle") or result.get("promptTemplateId"),
         "status": result.get("status"),
@@ -41,7 +42,17 @@ def redact_summary(result: dict[str, Any]) -> dict[str, Any]:
             "warningCodes": [item.get("code") for item in (ai_quality.get("warnings") or [])],
             "errorCodes": [item.get("code") for item in (ai_quality.get("errors") or [])],
         },
-        "identity": (checks.get("identity") or {}).get("status"),
+        "identity": identity_check.get("status"),
+        "identityAudit": {
+            "profile": identity_check.get("profile"),
+            "centerDelta": identity_check.get("centerDelta"),
+            "sizeRatioDelta": identity_check.get("sizeRatioDelta"),
+            "sizeRatioThresholds": identity_check.get("sizeRatioThresholds"),
+            "thresholds": identity_check.get("thresholds"),
+            "sourceFace": identity_check.get("sourceFace"),
+            "aiFace": identity_check.get("aiFace"),
+            "reason": identity_check.get("reason"),
+        },
         "composition": (checks.get("composition") or {}).get("status"),
         "realism": (checks.get("realism") or {}).get("status"),
         "notForOfficialDocument": metadata.get("notForOfficialDocument"),
