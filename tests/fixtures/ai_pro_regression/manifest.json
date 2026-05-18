@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "description": "Local AI Pro quality gate regression fixture cases. Images are generated at test runtime so CI does not call external AI providers or store private photos.",
+  "targetSpec": {"width": 295, "height": 413, "dpi": 300},
+  "targetBackgroundRgb": [98, 139, 206],
+  "cases": [
+    {
+      "id": "blue_background_pass_identity_unavailable",
+      "description": "AI Pro candidate matches the target blue background and ID-photo dimensions; synthetic no-face input should pass with identity unavailable warning."
+    },
+    {
+      "id": "red_background_fails_fallback",
+      "description": "AI Pro candidate has severe target-background drift and must fallback to Free Core with AI_PRO_BACKGROUND_COLOR_FAILED."
+    },
+    {
+      "id": "identity_drift_fails_fallback",
+      "description": "Mocked single-face geometry drift must fail identity guard and fallback with AI_PRO_IDENTITY_DRIFT_FAILED."
+    }
+  ]
+}

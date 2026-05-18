@@ -113,6 +113,10 @@ Validation commands:
 # Redacted env status only.
 .venv/bin/python scripts/check_ai_pro_env.py
 
+# Local/CI regression fixtures. Generates synthetic images and uses mock quality metadata;
+# it must not call real paid image providers.
+.venv/bin/python scripts/test-ai-pro-regression-fixtures.py
+
 # No-key/fallback smoke against a running API. Requires app auth env, but no provider key.
 API_BASE_URL=http://127.0.0.1:18084 .venv/bin/python scripts/e2e_ai_pro_phase3.py
 
